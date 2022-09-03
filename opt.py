@@ -36,7 +36,9 @@ def train(mat, xs, ys, node_cfg, epochs, gamma = 0.01, nu = 0.1, ic = None):
     in_nodes = np.argwhere(node_cfg > 0).flatten()
     out_nodes = np.argwhere(node_cfg < 0).flatten()
 
-    for _ in range(epochs):
+    losses = np.empty(epochs)
+
+    for i in range(epochs):
         for x, y in zip(xs, ys):
                 # Solve free state
                 bounds[in_nodes, 0] = x
@@ -61,7 +63,12 @@ def train(mat, xs, ys, node_cfg, epochs, gamma = 0.01, nu = 0.1, ic = None):
                 nudges = gamma * (delta_clamped**2 - delta_free**2)
                 mat -= trainable_mask * nudges
 
-    return mat
+        pred = np.clip(inference(mat, xs, node_cfg)[out_nodes], 1e-6, 1-1e-6)
+        losses[i] = np.sum(ys * np.log(pred) + (1-ys) * np .log(1-pred))
+        print(f'Epoch {i}: {losses[i]}')
+        # print(f'Epoch {i}: {pred}')
+
+    return mat, losses
 
 def inference(mat, xs, node_cfg):
     n = xs.shape[0]
