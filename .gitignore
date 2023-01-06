@@ -1,0 +1,9 @@
+__pycache__/
+.ipynb_checkpoints/
+.vscode/
+spice/
+.DS_Store
+*.pyc
+*.raw
+*.log
+*.cir

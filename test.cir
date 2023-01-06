@@ -1,6 +1,0 @@
-.title ReLu Test
-Vinput in 0 10
-R1 in out 1
-D1 1 0 D_ideal
-.model D_ideal D (Roff=1000 Ron=1 Vfwd=0 Vrev=100)
-.op
