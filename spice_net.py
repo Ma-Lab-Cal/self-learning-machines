@@ -1,8 +1,7 @@
 from PySpice.Spice.Netlist import Circuit, SubCircuit
+from PySpice.Probe.WaveForm import WaveForm
 from PySpice.Unit import *
-import ltspice
 import numpy as np
-from os import system
 import networkx as nx
 
 class LinearNetwork(Circuit):
@@ -10,15 +9,14 @@ class LinearNetwork(Circuit):
         self.name = name
         self.epsilon = epsilon
         super().__init__(name)
-        self.__nodes__ = np.array([i for i in range(con_graph.number_of_nodes())])
-        self.inputs = [self.V(n+1, *inds) \
+        self.__nodes__ = np.array([str(i) for i in range(con_graph.number_of_nodes())])
+        self.inputs = [self.B(n+1, *inds) \
          for n, inds in enumerate(node_cfg[0])]
-        self.outputs = [self.V(n+1 + len(self.inputs), *inds) \
+        self.outputs = [self.B(n+1 + len(self.inputs), *inds) \
          for n, inds in enumerate(node_cfg[1])]
-        for source in self.inputs:
-            source.enabled = False
-        for source in self.outputs:
-            source.enabled = False
+
+        # "hack" - add "index" voltage source to allow us to pass indexed lists of inputs
+        self.V('index', 'index', 0, 1)
 
         self.edges = [self.R(n+1, u, v, r) \
             for n, (u, v, r) in enumerate(con_graph.edges(data='weight'))]
@@ -39,52 +37,105 @@ class LinearNetwork(Circuit):
             # R.resistance = 1./(1./R.resistance + delta)
 
     def _solve(self, inputs, outputs = None):
-        circ = self
+        """Solves for all node voltages given differential input voltages
+        and optional differential output voltages. No post-processing of outputs
+
+        Args:
+            inputs: Input differential voltages. Should either be a vector with length
+                equal to number of inputs, or a 2d matrix with shape (num_inputs, num_examples)
+            outputs (optional): Optional output differential voltages. Should be a 
+                vector with length equal to number of outputs, a 2d matrix with shape 
+                (num_outputs, num_examples), or None. 
+
+        Returns:
+            _type_: _description_
+        """
+        # transpose inputs and outputs for simplicity of operations
+        inputs = np.array(inputs).T
+        if outputs is not None:
+            outputs = np.array(outputs).T
+
+        # input validity checks
         assert len(inputs) == len(self.inputs), \
             f'Expected {len(self.inputs)} but got {len(inputs)} inputs'
 
-        for source, V in zip(self.inputs, inputs):
-            source.enabled = True
-            source.dc_value = V
-        
         if outputs is not None:
+            assert len(outputs.shape) == len(inputs.shape), \
+                f'given {len(inputs.shape)}-dimensional input but {len(outputs.shape)}-dimensional output'
+
             assert len(outputs) == len(self.outputs), \
                 f'Expected {len(self.outputs)} but got {len(outputs)} inputs'
 
-            for source, V in zip(self.outputs, outputs):
+        # single example (vector inputs)
+        if len(inputs.shape) == 1:
+            n_examples = 1
+
+            # pass values into model for simulation
+            for source, V in zip(self.inputs, inputs):
                 source.enabled = True
-                source.dc_value = V
+                source.v = V
+
+            if outputs is not None:
+                for source, V in zip(self.outputs, outputs):
+                    source.enabled = True
+                    source.v = V
+            else:
+                for source in self.outputs:
+                    source.enabled = False
+
+        # multiple examples (matrix input)
+        elif len(inputs.shape) == 2:
+            if outputs is not None:
+                assert inputs.shape[1] == outputs.shape[1], \
+                    f'Got {inputs.shape[1]} input examples but {outputs.shape[1]} output examples'
+
+            n_examples = inputs.shape[1]
+
+            for source, V in zip(self.inputs, inputs):
+                source.enabled = True
+                indexed_V = [str(val) for pair in zip(range(1, n_examples+1), V) for val in pair]
+                V_string = ', '.join(indexed_V)
+                values_expr = f'pwl(V(index), {V_string})'
+                source.v = values_expr
+
+            if outputs is not None:
+                for source, V in zip(self.outputs, outputs):
+                    source.enabled = True
+                    indexed_V = [str(val) for pair in zip(range(1, n_examples+1), V) for val in pair]
+                    V_string = ', '.join(indexed_V)
+                    values_expr = f'pwl(V(index), {V_string})'
+                    source.v = values_expr
+
+            else:
+                for source in self.outputs:
+                    source.enabled = False
 
         else:
-            for source in self.outputs:
-                source.enabled = False
+            raise ValueError(f'input should be vector or 2d matrix, but got input of shape {inputs.shape}')
 
-        netlist = str(circ)
-        with open(f'{self.name}.cir', 'wt') as f:
-            f.write(netlist + '.op\n')
-            # f.write(netlist + '.tran 1\n')
-        system(f'/Applications/LTspice.app/Contents/MacOS/LTspice -b {self.name}.cir')
-        
-        l = ltspice.Ltspice(f'{self.name}.raw')
-        l.parse()
-        return l
+        simulator = self.simulator()
+        analysis = simulator.dc(Vindex=slice(1, n_examples, 1))
+
+        # populate ground reading with zeros for downstream convenience 
+        analysis.nodes['0'] = WaveForm.from_unit_values('0', u_V(np.zeros(n_examples)))
+
+        return analysis
+
 
     def solve(self, inputs, outputs = None):
-        l = self._solve(inputs, outputs)
-        return np.array([0 if l.get_data(f'V({i})') is None\
-            else l.get_data(f'V({i})')[-1] for i in self.__nodes__])
+        analysis = self._solve(inputs, outputs)
+        return np.array([u_V(analysis.nodes[i]) for i in self.__nodes__])
 
     def predict(self, inputs):
-        l = self._solve(inputs)
-        out = np.zeros(len(self.outputs))
+        analysis = self._solve(inputs)
+        n_examples = len(analysis.nodes[self.__nodes__[0]])
+        out = np.zeros((len(self.outputs), n_examples))
+
         for i, v in enumerate(self.outputs):
             a, b = v.node_names
-            v1 = l.get_data(f'V({a})')
-            v2 = l.get_data(f'V({b})')
-            if v1 is None: v1 = [0]
-            if v2 is None: v2 = [0]
-            out[i] = v1[0] - v2[0]
-        return out
+            out[i] = u_V(analysis.nodes[a] - analysis.nodes[b])
+
+        return out.T
 
     def copy(self, name):
         copy = LinearNetwork(name, nx.Graph(), [[], []], self.epsilon)
@@ -132,7 +183,10 @@ class NonLinearNetwork(LinearNetwork):
 
         # self.diodes = [self.D(n+1, u if d == v else v, d, model='ReLu')\
 
-        self.model('ReLu', 'D', Ron=0, Roff=1@u_GOhm, Vfwd=0, Vrev=10, Epsilon=0.001)
+        self.model('ReLu', 'D', js=0, n=0.001)
+        # self.model('ReLu', 'sw', ron=0, roff=1@u_GOhm, vt=0, vh=0.001)
+        # .model diosw sw vt=0 vh=0.001 ron=0.001 roff=10e9
+
         self.diodes = []
         self.nonlinear_vals = []
 
@@ -170,14 +224,14 @@ class NonLinearNetwork(LinearNetwork):
         copy.__nodes__ = self.__nodes__.copy()
 
         copy.inputs = []
-        for n, V in enumerate(self.inputs):
-            inds = V.node_names
-            copy.inputs.append(copy.V(n+1, *inds))
+        for n, B in enumerate(self.inputs):
+            inds = B.node_names
+            copy.inputs.append(copy.B(n+1, *inds))
 
         copy.outputs = []
-        for n, V in enumerate(self.outputs):
-            inds = V.node_names
-            copy.outputs.append(copy.V(n+1 + len(self.inputs), *inds))
+        for n, B in enumerate(self.outputs):
+            inds = B.node_names
+            copy.outputs.append(copy.B(n+1 + len(self.inputs), *inds))
 
         for source in copy.inputs:
             source.enabled = False

@@ -12,12 +12,12 @@ def train(net: Union[LinearNetwork, NonLinearNetwork], xs, ys, epochs, gamma = 0
         n_edges = len(net.edges)
         edges = net.edges
 
-    loss = np.empty(epochs+1)
+    loss = np.zeros(epochs+1)
     weights = np.empty((epochs+1, xs.shape[0], n_edges))
     updates = np.empty((epochs, xs.shape[0], n_edges))
 
     # Calculate initial accuracy 
-    pred = np.array([net.predict(x) for x in xs])
+    pred = net.predict(xs)
     loss[0] = np.mean((ys - pred)**2)
 
     if hasattr(net, 'diodes'):
@@ -35,7 +35,7 @@ def train(net: Union[LinearNetwork, NonLinearNetwork], xs, ys, epochs, gamma = 0
         for j, x, y in zip(range(xs.shape[0]), xs, ys):
             free = net.solve(x)
             nudges = eta * y + (1-eta) * net.predict(x)
-            clamped = net.solve(x, nudges)
+            clamped = net.solve(x, nudges.reshape(y.shape))
 
             free_rep = np.tile(free, [n_nodes, 1])
             clamped_rep = np.tile(clamped, [n_nodes,1])
@@ -54,7 +54,7 @@ def train(net: Union[LinearNetwork, NonLinearNetwork], xs, ys, epochs, gamma = 0
             updates[i, j] = trainable_updates
             weights[i+1, j] = [R.resistance for R in net.edges] + [X.R1.resistance for X in net.nonlinear_vals]
 
-        pred = np.array([net.predict(x) for x in xs])
+        pred = net.predict(xs)
         loss[i+1] = np.mean((ys - pred)**2)
         print(f'Epoch {i+1}: {loss[i+1]}')
 
@@ -86,6 +86,7 @@ def visualize(net: Union[LinearNetwork, NonLinearNetwork], mode: str='r'):
         G.add_edge(b, a, weight=-1, type='source', io='output')
 
     # nonlinear networks only
+    # create a separate graph for diodes so diode edges don't overwrite voltage sources
     Gprime = nx.DiGraph()
     Gprime.add_nodes_from(G)
     if hasattr(net, 'diodes'):

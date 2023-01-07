@@ -3,7 +3,9 @@ __pycache__/
 .vscode/
 spice/
 .DS_Store
+tmp.*
 *.pyc
 *.raw
 *.log
 *.cir
+*.circ
