@@ -26,7 +26,7 @@ class LinearNetwork(Circuit):
         assert len(self.edges) == len(updates), \
             f'Have {len(self.edges)} resistors but {len(updates)} updates'
         for R, delta in zip(self.edges, updates):
-            R.resistance = min(R.resistance - delta, self.epsilon)
+            R.resistance = max(R.resistance - delta, self.epsilon)
 
     def update_y(self, updates):
         '''updates internal resistances given a list of admittance deltas'''
@@ -142,19 +142,14 @@ class LinearNetwork(Circuit):
         copy.__nodes__ = self.__nodes__.copy()
 
         copy.inputs = []
-        for n, V in enumerate(self.inputs):
-            inds = V.node_names
-            copy.inputs.append(copy.V(n+1, *inds))
+        for n, B in enumerate(self.inputs):
+            inds = B.node_names
+            copy.inputs.append(copy.B(n+1, *inds))
 
         copy.outputs = []
-        for n, V in enumerate(self.outputs):
-            inds = V.node_names
-            copy.outputs.append(copy.V(n+1 + len(self.inputs), *inds))
-
-        for source in copy.inputs:
-            source.enabled = False
-        for source in copy.outputs:
-            source.enabled = False
+        for n, B in enumerate(self.outputs):
+            inds = B.node_names
+            copy.outputs.append(copy.B(n+1 + len(self.inputs), *inds))
 
         copy.edges = []
         for n, R in enumerate(self.edges):
@@ -203,9 +198,9 @@ class NonLinearNetwork(LinearNetwork):
         u_e = updates[:len(self.edges)]
         u_d = updates[len(self.edges):]
         for R, delta in zip(self.edges, u_e):
-            R.resistance = min(R.resistance - delta, self.epsilon)
+            R.resistance = max(R.resistance - delta, self.epsilon)
         for X, delta in zip(self.nonlinear_vals, u_d):
-            X.R1.resistance = min(X.R1.resistance - delta, self.epsilon)
+            X.R1.resistance = max(X.R1.resistance - delta, self.epsilon)
 
     def update_y(self, updates):
         '''updates internal resistances given a list of admittance deltas'''
@@ -232,11 +227,6 @@ class NonLinearNetwork(LinearNetwork):
         for n, B in enumerate(self.outputs):
             inds = B.node_names
             copy.outputs.append(copy.B(n+1 + len(self.inputs), *inds))
-
-        for source in copy.inputs:
-            source.enabled = False
-        for source in copy.outputs:
-            source.enabled = False
 
         copy.edges = []
         for n, R in enumerate(self.edges):
