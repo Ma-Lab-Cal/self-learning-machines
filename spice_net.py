@@ -5,7 +5,7 @@ import numpy as np
 import networkx as nx
 
 class LinearNetwork(Circuit):
-    def __init__(self, name: str, con_graph: nx.Graph, node_cfg, epsilon=1e-9):
+    def __init__(self, name: str, con_graph: nx.Graph, node_cfg, epsilon=1e-10):
         self.name = name
         self.epsilon = epsilon
         super().__init__(name)
@@ -20,6 +20,12 @@ class LinearNetwork(Circuit):
 
         self.edges = [self.R(n+1, u, v, r) \
             for n, (u, v, r) in enumerate(con_graph.edges(data='weight'))]
+
+        # to make spice happy?!?!?
+        # TODO: do we really need this?
+        for i, n in enumerate(self.__nodes__):
+            if n != '0':
+                self.R(f'dummy{i}', n, 0, 1./self.epsilon)
 
     def update_r(self, updates):
         '''updates internal resistances given a list of resistance deltas'''
@@ -51,9 +57,9 @@ class LinearNetwork(Circuit):
             _type_: _description_
         """
         # transpose inputs and outputs for simplicity of operations
-        inputs = np.array(inputs).T
+        inputs = np.transpose(inputs)
         if outputs is not None:
-            outputs = np.array(outputs).T
+            outputs = np.transpose(outputs)
 
         # input validity checks
         assert len(inputs) == len(self.inputs), \
@@ -68,42 +74,38 @@ class LinearNetwork(Circuit):
 
         # single example (vector inputs)
         if len(inputs.shape) == 1:
-            n_examples = 1
-
-            # pass values into model for simulation
-            for source, V in zip(self.inputs, inputs):
-                source.enabled = True
-                source.v = V
+            inputs = inputs.reshape((-1, 1))
 
             if outputs is not None:
-                for source, V in zip(self.outputs, outputs):
-                    source.enabled = True
-                    source.v = V
-            else:
-                for source in self.outputs:
-                    source.enabled = False
+                outputs = outputs.reshape((-1, 1))
 
         # multiple examples (matrix input)
-        elif len(inputs.shape) == 2:
+        if len(inputs.shape) == 2:
             if outputs is not None:
                 assert inputs.shape[1] == outputs.shape[1], \
                     f'Got {inputs.shape[1]} input examples but {outputs.shape[1]} output examples'
 
             n_examples = inputs.shape[1]
 
-            for source, V in zip(self.inputs, inputs):
+            for source, v in zip(self.inputs, inputs):
                 source.enabled = True
-                indexed_V = [str(val) for pair in zip(range(1, n_examples+1), V) for val in pair]
-                V_string = ', '.join(indexed_V)
-                values_expr = f'pwl(V(index), {V_string})'
+                if n_examples > 1:
+                    indexed_v = [str(val) for pair in zip(range(1, n_examples+1), v) for val in pair]
+                    v_string = ', '.join(indexed_v)
+                    values_expr = f'pwl(V(index), {v_string})'
+                else:
+                    values_expr = v[0]
                 source.v = values_expr
 
             if outputs is not None:
-                for source, V in zip(self.outputs, outputs):
+                for source, v in zip(self.outputs, outputs):
                     source.enabled = True
-                    indexed_V = [str(val) for pair in zip(range(1, n_examples+1), V) for val in pair]
-                    V_string = ', '.join(indexed_V)
-                    values_expr = f'pwl(V(index), {V_string})'
+                    if n_examples > 1:
+                        indexed_v = [str(val) for pair in zip(range(1, n_examples+1), v) for val in pair]
+                        v_string = ', '.join(indexed_v)
+                        values_expr = f'pwl(V(index), {v_string})'
+                    else:
+                        values_expr = v[0]
                     source.v = values_expr
 
             else:
@@ -178,9 +180,7 @@ class NonLinearNetwork(LinearNetwork):
 
         # self.diodes = [self.D(n+1, u if d == v else v, d, model='ReLu')\
 
-        self.model('ReLu', 'D', js=0, n=0.001)
-        # self.model('ReLu', 'sw', ron=0, roff=1@u_GOhm, vt=0, vh=0.001)
-        # .model diosw sw vt=0 vh=0.001 ron=0.001 roff=10e9
+        self.model('ReLu', 'D', n=1.0)
 
         self.diodes = []
         self.nonlinear_vals = []

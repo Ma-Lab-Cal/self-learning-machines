@@ -2,8 +2,11 @@ from spice_net import *
 import networkx as nx
 from typing import Union
 
-def train(net: Union[LinearNetwork, NonLinearNetwork], xs, ys, epochs, gamma = 0.01, eta = 0.1, shuffle=True):
+def train(net: Union[LinearNetwork, NonLinearNetwork], xs, ys, epochs, gamma = 0.01, eta = 0.1, log_steps=None, shuffle=True):
     n_nodes = len(net.__nodes__)
+
+    if log_steps is None:
+        log_steps = list(range(epochs))
 
     if hasattr(net, 'diodes'):
         n_edges = len(net.edges) + len(net.diodes)
@@ -13,8 +16,8 @@ def train(net: Union[LinearNetwork, NonLinearNetwork], xs, ys, epochs, gamma = 0
         edges = net.edges
 
     loss = np.zeros(epochs+1)
-    weights = np.empty((epochs+1, xs.shape[0], n_edges))
-    updates = np.empty((epochs, xs.shape[0], n_edges))
+    weights = np.empty((len(log_steps)+1, xs.shape[0], n_edges))
+    updates = np.empty((len(log_steps), xs.shape[0], n_edges))
 
     # Calculate initial accuracy 
     pred = net.predict(xs)
@@ -26,6 +29,12 @@ def train(net: Union[LinearNetwork, NonLinearNetwork], xs, ys, epochs, gamma = 0
             , (xs.shape[0],1))
     else:
         weights[0] = np.tile([R.resistance for R in net.edges], (xs.shape[0],1))
+
+    e1, e2 = [], []
+    for R in edges:
+        a, b = list(map(int, R.node_names))
+        e1.append(a)
+        e2.append(b)
 
     for i in range(epochs):
         if shuffle:
@@ -44,15 +53,15 @@ def train(net: Union[LinearNetwork, NonLinearNetwork], xs, ys, epochs, gamma = 0
             delta_clamped = clamped_rep - clamped_rep.T
 
             update = -gamma * (delta_clamped**2 - delta_free**2)
-            trainable_updates = np.empty(n_edges)
+            # trainable_updates = np.empty(n_edges)
 
-            for k, R in enumerate(edges):
-                a, b = list(map(int, R.node_names))
-                trainable_updates[k] = update[a, b] #/ (R.resistance**2)
+            trainable_updates = update[e1, e2] #/ (R.resistance**2)
 
             net.update_y(trainable_updates)
-            updates[i, j] = trainable_updates
-            weights[i+1, j] = [R.resistance for R in net.edges] + [X.R1.resistance for X in net.nonlinear_vals]
+            if i in log_steps:
+                step = log_steps
+                updates[i, j] = trainable_updates
+                weights[i+1, j] = [R.resistance for R in net.edges] + [X.R1.resistance for X in net.nonlinear_vals]
 
         pred = net.predict(xs)
         loss[i+1] = np.mean((ys - pred)**2)
@@ -60,7 +69,7 @@ def train(net: Union[LinearNetwork, NonLinearNetwork], xs, ys, epochs, gamma = 0
 
     return net, loss, updates, weights
     
-def visualize(net: Union[LinearNetwork, NonLinearNetwork], mode: str='r'):
+def visualize(net: Union[LinearNetwork, NonLinearNetwork], mode: str='y'):
     G = nx.DiGraph()
 
     for R in net.edges:
