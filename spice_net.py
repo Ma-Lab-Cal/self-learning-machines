@@ -7,7 +7,7 @@ from PySpice.Unit import *
 import numpy as np
 import networkx as nx
 
-class LinearNetwork(Circuit):
+class AbstractNetwork(Circuit):
     def __init__(self, name: str, con_graph: nx.Graph, node_cfg, epsilon=1e-10):
         self.name = name
         self.epsilon = epsilon
@@ -20,30 +20,6 @@ class LinearNetwork(Circuit):
 
         # "hack" - add "index" voltage source to allow us to pass indexed lists of inputs
         self.V('index', 'index', 0, 1)
-
-        self.edges = [self.R(n+1, u, v, r) \
-            for n, (u, v, r) in enumerate(con_graph.edges(data='weight'))]
-
-        # to make spice happy?!?!?
-        # TODO: do we really need this?
-        for i, n in enumerate(self.__nodes__):
-            if n != '0':
-                self.R(f'dummy{i}', n, 0, 1./self.epsilon)
-
-    def update_r(self, updates):
-        '''updates internal resistances given a list of resistance deltas'''
-        assert len(self.edges) == len(updates), \
-            f'Have {len(self.edges)} resistors but {len(updates)} updates'
-        for R, delta in zip(self.edges, updates):
-            R.resistance = max(R.resistance - delta, self.epsilon)
-
-    def update_y(self, updates):
-        '''updates internal resistances given a list of admittance deltas'''
-        assert len(self.edges) == len(updates), \
-            f'Have {len(self.edges)} resistors but {len(updates)} updates'
-        for R, delta in zip(self.edges, updates):
-            R.resistance = 1./max(1./R.resistance + delta, self.epsilon)
-            # R.resistance = 1./(1./R.resistance + delta)
 
     def _solve(self, inputs, outputs = None):
         """Solves for all node voltages given differential input voltages
@@ -120,16 +96,6 @@ class LinearNetwork(Circuit):
 
         simulator = self.simulator()
         analysis = simulator.dc(Vindex=slice(1, n_examples, 1))
-        # circuit_desc = self.__str__()
-        # print(circuit_desc)
-
-        # with open('test.cir', 'w') as f:
-        #     f.write(circuit_desc)
-        # os.system('/Applications/LTspice.app/Contents/MacOS/LTspice -b test.cir test.cir -o test.raw')
-
-        # l = ltspice.Ltspice(f'test.raw')
-        # l.parse()
-        # return l
 
         # populate ground reading with zeros for downstream convenience 
         analysis.nodes['0'] = WaveForm.from_unit_values('0', u_V(np.zeros(n_examples)))
@@ -174,184 +140,133 @@ class LinearNetwork(Circuit):
 
         return copy
 
-class ReLu_edge(SubCircuit):
-    __nodes__ = ('t_in', 't_out')
-    def __init__(self, name, r, eps=1e-9):
-
-        SubCircuit.__init__(self, name, *self.__nodes__)
-
-        self.R(1, 't_in', 'dummy', r)
-        self.D(1, 'dummy', 't_out', model='ReLu')
-        self.eps = eps
-
-    def update(self, delta):
-        self.R1.resistance = max(self.R1.resistance + delta, self.eps)
-
 class Linear_edge(SubCircuit):
+    """Linear resistive edge parameterized by conductance"""
     __nodes__ = ('t_D', 't_S')
 
     def __init__(self, name, circ, r_init, epsilon=1e-6):
 
         SubCircuit.__init__(self, name, *self.__nodes__)
 
-        self.R(1, 't_D', 't_S', r_init)
+        self.R(1, 't_D', 't_S', 1./r_init)
         self.epsilon = epsilon
 
     def update(self, delta):
         self.R1.resistance = 1./max(1./self.R1.resistance + delta, self.epsilon)
 
     def get_val(self):
-        return self.R1.resistance
+        """Returns edge conductance"""
+        return 1./self.R1.resistance
     
 class Transistor_edge(SubCircuit):
     __nodes__ = ('t_D', 't_S')
 
-    def __init__(self, name, circ, v_gs, r_series=1e-4):
+    def __init__(self, name, circ, v_gs, r_shunt=1e16, epsilon=1e-6):
 
         SubCircuit.__init__(self, name, *self.__nodes__)
+        self.alpha = 1
 
-        self.V(1, 't_G', 't_S', v_gs)
-        # self.V(1, 't_G', 0, v_gs)
+        self.V(1, 't_G', 't_S', self.alpha * v_gs)
 
-        self.R(1, 't_D', 'dummy', r_series)
-        self.MOSFET(1, 'dummy', 't_G', 't_S', 't_S', model='Ideal')
+        self.R(1, 't_D', 't_S', r_shunt)
+        self.MOSFET(1, 't_D', 't_G', 't_S', 't_S', model='Ideal')
 
         self.model('Ideal', 'NMOS', level=1)
 
     def update(self, delta):
-        self.V1.dc_value += delta
+        self.V1.dc_value += self.alpha * delta
 
     def get_val(self):
         return self.V1.dc_value
 
-# class TransistorNetwork(LinearNetwork):
-#     def __init__(self, name: str, con_graph: nx.DiGraph, node_cfg, epsilon=1e-9):
+class Scaled_Transistor_edge(SubCircuit):
+    __nodes__ = ('t_D', 't_S')
 
-#         resistor_net = nx.create_empty_copy(con_graph)
-#         super().__init__(name, resistor_net, node_cfg, epsilon)
+    def __init__(self, name, circ, v_gs, r_shunt=0, epsilon=1e-6):
 
-#         # self.diodes = [self.D(n+1, u if d == v else v, d, model='ReLu')\
+        SubCircuit.__init__(self, name, *self.__nodes__)
+        # constant of porportionality represenitng slope of I-V curve
+        # intended to make transistor network update match linear network update
+        self.alpha = 1. / 1.7716667740993823e-05
 
-#         self.model('ReLu', 'D', n=1.0)
+        self.V(1, 't_G', 't_S', self.alpha * v_gs)
 
-#         self.diodes = []
-#         self.nonlinear_vals = []
+        self.R(1, 't_D', 'dummy', r_shunt)
+        self.MOSFET(1, 'dummy', 't_G', 't_S', 't_S', model='Ideal')
 
-#         for n, (u, v, r) in enumerate(con_graph.edges(data='weight')):
-#             edge = Transistor_edge(f'e{n+1}', r)
-#             self.nonlinear_vals.append(edge)
-#             self.subcircuit(edge)
-#             self.edges.append(self.X(n+1, f'e{n+1}', u, v))
+        self.model('Ideal', 'NMOS', level=1)
 
-#     def update(self, updates):
-#         for T, delta in zip(self.edges, updates):
-#             T.V1.voltage += delta
 
-#     def update_r(self, updates):
-#         self.update(updates)
+    def update(self, delta):
+        self.V1.dc_value += self.alpha * delta
 
-#     def update_y(self, updates):
-#         self.update(updates)
+    def get_val(self):
+        return self.V1.dc_value
+    
+class Ground_reference_edge(SubCircuit):
+    __nodes__ = ('t_D', 't_S', 'gnd')
 
-class TransistorNetwork(LinearNetwork):
-    def __init__(self, name: str, con_graph: nx.DiGraph, node_cfg, epsilon=1e-9):
+    def __init__(self, name, circ, v_gs, r_shunt=1e16, epsilon=1e-6):
 
-        # res_filter = lambda u, v: con_graph[u][v]['type'] == 'resistor'
-        # resistor_net = nx.subgraph_view(con_graph, filter_edge=res_filter).to_undirected(as_view=True)
+        SubCircuit.__init__(self, name, *self.__nodes__)
+        self.alpha = 1
+
+        self.V(1, 't_G', 'gnd', self.alpha * v_gs)
+
+        self.R(1, 't_D', 't_S', r_shunt)
+        self.MOSFET(1, 't_D', 't_G', 't_S', 't_S', model='Ideal')
+
+        self.model('Ideal', 'NMOS', level=1)
+
+    def update(self, delta):
+        self.V1.dc_value += self.alpha * delta
+
+    def get_val(self):
+        return self.V1.dc_value
+
+class EdgeNetwork(AbstractNetwork):
+    def __init__(self, name: str, edge_class, con_graph: nx.DiGraph, node_cfg, epsilon=1e-9):
         resistor_net = con_graph.to_undirected(as_view=True)
         super().__init__(name, resistor_net, node_cfg, epsilon)
 
-        # self.diodes = [self.D(n+1, u if d == v else v, d, model='ReLu')\
+        self.edges = []
 
-        # self.model('ReLu', 'D', n=1.0)
+        nodes_map = {n: i for i, n in enumerate(con_graph.nodes())}
+        for n, (u, v, r) in enumerate(con_graph.edges(data='weight')):
+            edge = edge_class(f'e{n+1}', self, r, epsilon=epsilon)
+            self.subcircuit(edge)
+            self.edges.append(edge)
+            edge.circ = self.X(n+1, f'e{n+1}', nodes_map[u], nodes_map[v])
+
+    def update(self, updates):
+        for edge, delta in zip(self.edges, updates):
+            edge.update(delta)
+
+class LinearNetwork(EdgeNetwork):
+    def __init__(self, name: str, con_graph: nx.DiGraph, node_cfg, epsilon=1e-9):
+        super().__init__(name, Linear_edge, con_graph, node_cfg, epsilon)
+
+class TransistorNetwork(EdgeNetwork):
+    def __init__(self, name: str, con_graph: nx.DiGraph, node_cfg, epsilon=1e-9):
+        super().__init__(name, Transistor_edge, con_graph, node_cfg, epsilon)
+
+class ScaledTransistorNetwork(EdgeNetwork):
+    def __init__(self, name: str, con_graph: nx.DiGraph, node_cfg, epsilon=1e-9):
+        super().__init__(name, Scaled_Transistor_edge, con_graph, node_cfg, epsilon)
+
+class GroundReferenceNetwork(AbstractNetwork):
+    def __init__(self, name: str, con_graph: nx.DiGraph, node_cfg, epsilon=1e-9):
+        super().__init__(name, con_graph, node_cfg, epsilon)
 
         self.edges = []
 
+        nodes_map = {n: i for i, n in enumerate(con_graph.nodes())}
         for n, (u, v, r) in enumerate(con_graph.edges(data='weight')):
-            edge = Linear_edge(f'e{n+1}', self, r)
+            edge = Ground_reference_edge(f'e{n+1}', self, r, epsilon=epsilon)
             self.subcircuit(edge)
             self.edges.append(edge)
-            edge.circ = self.X(n+1, f'e{n+1}', u, v)
+            edge.circ = self.X(n+1, f'e{n+1}', nodes_map[u], nodes_map[v], 0)
 
     def update(self, updates):
-        '''updates internal resistances given a list of VGS deltas'''
-        # assert len(self.edges) + len(self.diodes) == len(updates), \
-            # f'Have {len(self.edges) + len(self.diodes)} resistors but {len(updates)} updates'
         for edge, delta in zip(self.edges, updates):
             edge.update(delta)
-    
-class ReLUNetwork(LinearNetwork):
-    def __init__(self, name: str, con_graph: nx.DiGraph, node_cfg, epsilon=1e-9):
-
-        res_filter = lambda u, v: con_graph[u][v]['type'] == 'resistor'
-        diode_filter = lambda u, v: con_graph[u][v]['type'] == 'diode'
-        resistor_net = nx.subgraph_view(con_graph, filter_edge=res_filter).to_undirected(as_view=True)
-        super().__init__(name, resistor_net, node_cfg, epsilon)
-
-        # self.diodes = [self.D(n+1, u if d == v else v, d, model='ReLu')\
-
-        self.model('ReLu', 'D', n=1.0)
-
-        self.diodes = []
-        self.nonlinear_vals = []
-
-        for n, (u, v, r) in enumerate(nx.subgraph_view(con_graph, filter_edge=diode_filter).edges(data='weight')):
-            edge = ReLu_edge(f'e{n+1}', r)
-            self.nonlinear_vals.append(edge)
-            self.subcircuit(edge)
-            self.diodes.append(self.X(n+1, f'e{n+1}', u, v))
-
-    def update_r(self, updates):
-        '''updates internal resistances given a list of resistance deltas'''
-        assert len(self.edges) + len(self.diodes) == len(updates), \
-            f'Have {len(self.edges) + len(self.diodes)} resistors but {len(updates)} updates'
-        u_e = updates[:len(self.edges)]
-        u_d = updates[len(self.edges):]
-        for R, delta in zip(self.edges, u_e):
-            R.resistance = max(R.resistance - delta, self.epsilon)
-        for X, delta in zip(self.nonlinear_vals, u_d):
-            X.R1.resistance = max(X.R1.resistance - delta, self.epsilon)
-
-    def update_y(self, updates):
-        '''updates internal resistances given a list of admittance deltas'''
-        assert len(self.edges) + len(self.diodes) == len(updates), \
-            f'Have {len(self.edges) + len(self.diodes)} resistors but {len(updates)} updates'
-        u_e = updates[:len(self.edges)]
-        u_d = updates[len(self.edges):]
-        for R, delta in zip(self.edges, u_e):
-            R.resistance = 1./max(1./R.resistance + delta, self.epsilon)
-        for X, delta in zip(self.nonlinear_vals, u_d):
-            X.R1.resistance = 1./max(1./X.R1.resistance + delta, self.epsilon)
-
-    def copy(self, name):
-        copy = NonLinearNetwork(name, nx.Graph(), [[], []], self.epsilon)
-
-        copy.__nodes__ = self.__nodes__.copy()
-
-        copy.inputs = []
-        for n, B in enumerate(self.inputs):
-            inds = B.node_names
-            copy.inputs.append(copy.B(n+1, *inds))
-
-        copy.outputs = []
-        for n, B in enumerate(self.outputs):
-            inds = B.node_names
-            copy.outputs.append(copy.B(n+1 + len(self.inputs), *inds))
-
-        copy.edges = []
-        for n, R in enumerate(self.edges):
-            inds = R.node_names
-            r = R.resistance
-            copy.edges.append(copy.R(n+1, *inds, r))
-
-        copy.nonlinear_vals = []
-        copy.diodes = []
-        for n, (D, X) in enumerate(zip(self.nonlinear_vals, self.diodes)):
-            r = D.R1.resistance
-            edge = ReLu_edge(f'e{n+1}', r)
-            copy.nonlinear_vals.append(edge)
-            copy.subcircuit(edge)
-            inds = X.node_names
-            copy.diodes.append(copy.X(n+1, f'e{n+1}', *inds))
-
-        return copy
