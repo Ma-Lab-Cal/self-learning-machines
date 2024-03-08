@@ -6,6 +6,7 @@ from PySpice.Probe.WaveForm import WaveForm
 from PySpice.Unit import *
 import numpy as np
 import networkx as nx
+import itertools
 
 class AbstractNetwork(Circuit):
     def __init__(self, name: str, con_graph: nx.Graph, node_cfg, epsilon=1e-10):
@@ -66,7 +67,12 @@ class AbstractNetwork(Circuit):
 
             n_examples = inputs.shape[1]
 
-            for source, v in zip(self.inputs, inputs):
+            if outputs is not None:
+                source_iter = itertools.chain(zip(self.inputs, inputs), zip(self.outputs, outputs))
+            else:
+                source_iter = zip(self.inputs, inputs)
+
+            for source, v in source_iter:
                 source.enabled = True
                 if n_examples > 1:
                     indexed_v = [str(val) for pair in zip(range(1, n_examples+1), v) for val in pair]
@@ -76,18 +82,7 @@ class AbstractNetwork(Circuit):
                     values_expr = v[0]
                 source.v = values_expr
 
-            if outputs is not None:
-                for source, v in zip(self.outputs, outputs):
-                    source.enabled = True
-                    if n_examples > 1:
-                        indexed_v = [str(val) for pair in zip(range(1, n_examples+1), v) for val in pair]
-                        v_string = ', '.join(indexed_v)
-                        values_expr = f'pwl(V(index), {v_string})'
-                    else:
-                        values_expr = v[0]
-                    source.v = values_expr
-
-            else:
+            if outputs is None:
                 for source in self.outputs:
                     source.enabled = False
 
