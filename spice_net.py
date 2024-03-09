@@ -3,7 +3,7 @@ import ltspice
 from PySpice.Spice.Netlist import Circuit, SubCircuit
 from PySpice.Spice.Parser import SpiceParser
 from PySpice.Probe.WaveForm import WaveForm
-from PySpice.Unit import *
+from PySpice.Unit import u_V
 import numpy as np
 import networkx as nx
 import itertools
