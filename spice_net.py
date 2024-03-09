@@ -77,7 +77,7 @@ class AbstractNetwork(Circuit):
                 if n_examples > 1:
                     indexed_v = [str(val) for pair in zip(range(1, n_examples+1), v) for val in pair]
                     v_string = ', '.join(indexed_v)
-                    values_expr = f'{{fasttable(V(index), {v_string})}}'
+                    values_expr = f'{{pwl(V(index), {v_string})}}'
                 else:
                     values_expr = v[0]
                 source.v = values_expr
