@@ -1,4 +1,5 @@
 from spice_net import *
+from PySpice.Unit import u_V
 import networkx as nx
 from typing import Union
 import os
@@ -32,7 +33,7 @@ def get_content_cocontent(VGS, vmin=-0.5, vmax=5, n=1000):
 
     return content_table, cocontent_table, I, V
 
-def train(net: Union[LinearNetwork, TransistorNetwork], xs, ys, epochs, gamma = 10, eta = 0.1, l=0, log_steps=None, shuffle=True):
+def train(net: Union[LinearNetwork, TransistorNetwork], xs, ys, epochs, gamma = 10, eta = 0.1, l=0, log_steps=1, shuffle=True):
     """Training loop
 
     Args:
@@ -45,7 +46,7 @@ def train(net: Union[LinearNetwork, TransistorNetwork], xs, ys, epochs, gamma = 
         eta (float, optional): Nudge parameter for contrastive learning. Defaults to 0.1.
         l (float, optional): Regularization parameter. Balances finding solutions that fit the data with those that dissipate less power. 
         Defaults to 0.
-        log_steps (_type_, optional): List of steps to log the weights and updates at. If None, logs at every epoch. Defaults to None.
+        log_steps (int, optional): Log the loss every log_steps epochs. Defaults to 1.
         shuffle (bool, optional): Whether to shuffle the dataset before each epoch. Defaults to True.
 
     Returns:
@@ -53,15 +54,12 @@ def train(net: Union[LinearNetwork, TransistorNetwork], xs, ys, epochs, gamma = 
     """
     n_nodes = len(net.__nodes__)
 
-    if log_steps is None:
-        log_steps = list(range(epochs))
-
     n_edges = len(net.edges)
     edges = net.edges
 
-    loss = np.zeros(epochs+1)
-    weights = np.empty((len(log_steps)+1, xs.shape[0], n_edges))
-    updates = np.empty((len(log_steps), xs.shape[0], n_edges))
+    loss = np.zeros(epochs//log_steps+1)
+    weights = np.empty((epochs//log_steps+1, xs.shape[0], n_edges))
+    updates = np.empty((epochs//log_steps, xs.shape[0], n_edges))
 
     # Calculate initial accuracy 
     pred = net.predict(xs)
@@ -81,8 +79,18 @@ def train(net: Union[LinearNetwork, TransistorNetwork], xs, ys, epochs, gamma = 
             xs = xs[perm]
             ys = ys[perm]
         for j, x, y in zip(range(xs.shape[0]), xs, ys):
-            free = net.solve(x)
-            nudges = eta * y + (1-eta) * net.predict(x)
+            # compute nudges from free state without an additional
+            # expensive call to solve: saves roughly 33% computation time
+            free_analysis = net._solve(x)
+            free = np.array([u_V(free_analysis.nodes[str(i)]) for i in net.__nodes__])
+
+            preds = np.zeros((len(net.outputs), 1))
+
+            for k, v in enumerate(net.outputs):
+                a, b = v.node_names
+                preds[k] = u_V(free_analysis.nodes[a] - free_analysis.nodes[b])
+            nudges = eta * y + (1-eta) * preds
+
             clamped = net.solve(x, nudges.reshape(y.shape))
 
             free_rep = np.tile(free, [n_nodes, 1])
@@ -97,15 +105,15 @@ def train(net: Union[LinearNetwork, TransistorNetwork], xs, ys, epochs, gamma = 
 
             net.update(trainable_updates) 
 
-            if i in log_steps:
-                k = log_steps.index(i)
-                updates[k, j] = trainable_updates
-                weights[k+1, j] = [E.get_val() for E in net.edges]
+            if i % log_steps == 0:
+                updates[i // log_steps, j] = trainable_updates
+                weights[(i // log_steps) + 1, j] = [E.get_val() for E in net.edges]
 
-        pred = net.predict(xs)
-        loss[i+1] = np.mean((ys - pred)**2)
-        if i in log_steps:
-            print(f'Epoch {i+1}: {loss[i+1]}')
+        preds = net.predict(xs)
+        loss[(i // log_steps) + 1] = np.mean((ys - preds)**2)
+
+        if i % log_steps == 0:
+            print(f'Epoch {i+1}: {loss[(i // log_steps) + 1]}')
 
     return net, loss, updates, weights
     
