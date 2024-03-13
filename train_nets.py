@@ -29,7 +29,7 @@ def init_model_xor(name, cls):
 experiments = ['ground_reference_xor', 'source_reference_xor']
 classes = [GroundReferenceNetwork, TransistorNetwork]
 
-#load data
+# load data
 xor_data = np.load('data/xor_train_data.npz')
 train_inputs = xor_data['inputs']
 train_outputs = xor_data['outputs']
@@ -37,9 +37,9 @@ train_outputs = xor_data['outputs']
 # define parameters
 eta = 0.5
 gamma = 0.1 * 1/eta
-total_iters = 150000
+total_epochs = 100000
 checkpoints = 15
-epochs = int(math.ceil(total_iters / checkpoints))
+epochs = int(math.ceil(total_epochs / checkpoints))
 
 for name, cls in zip(experiments, classes):
     model = init_model_xor(name, cls)
@@ -52,7 +52,7 @@ for name, cls in zip(experiments, classes):
     start = time.time()
 
     for i in tqdm.trange(checkpoints):
-        model, loss, updates, weights = train(model, train_inputs, train_outputs, epochs=epochs, gamma=gamma, eta=eta, log_steps=epochs//2)
+        model, loss, updates, weights = train(model, train_inputs, train_outputs, epochs=epochs, gamma=gamma, eta=eta, log_steps=epochs//10)
         intermediate_preds.append(model.predict(train_inputs))
 
         total_loss.append(loss)
@@ -101,7 +101,7 @@ train_outputs = nonlinear_data['outputs']
 # define parameters
 eta = 1.0
 gamma = 0.1 * 1/eta
-total_iters = 150000
+total_iters = 100000
 checkpoints = 15
 epochs = int(math.ceil(total_iters / checkpoints))
 
@@ -116,7 +116,7 @@ for name, cls in zip(experiments_2, classes_2):
     start = time.time()
 
     for i in tqdm.trange(checkpoints):
-        model, loss, updates, weights = train(model, train_inputs, train_outputs, epochs=epochs, gamma=gamma, eta=eta, log_steps=epochs//2)
+        model, loss, updates, weights = train(model, train_inputs, train_outputs, epochs=epochs, gamma=gamma, eta=eta, log_steps=epochs//10)
         intermediate_preds.append(model.predict(train_inputs))
 
         total_loss.append(loss)
