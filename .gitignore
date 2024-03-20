@@ -1,5 +1,7 @@
 __pycache__/
 wandb/
+nonlinear_model/
+nonlinear_model.zip
 .ipynb_checkpoints/
 .vscode/
 results/

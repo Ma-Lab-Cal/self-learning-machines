@@ -7,6 +7,7 @@ import networkx as nx
 from helpers import *
 from spice_net import *
 import pickle
+import json
 import time
 import tqdm
 import datetime
@@ -26,6 +27,7 @@ parser.add_argument('--learning_rate', type=float, default=0.1, help='Learning r
 parser.add_argument('--nudge_factor', type=float, default=0.5, help='Nudge factor (default: 0.5)')
 parser.add_argument('--num_iterations', type=int, default=100000, help='Number of iterations (default: 100000)')
 parser.add_argument('--num_checkpoints', type=int, default=20, help='Number of checkpoints (default: 20)')
+parser.add_argument('--dataset', type=str, default=None, help='Number of checkpoints. Defaults to dataset from paper')
 
 # Parse command-line arguments
 args = parser.parse_args()
@@ -64,16 +66,21 @@ def init_model_nonlinear(name, cls):
 
     
 # Load data
-if args.task_name == "xor":
-    xor_data = np.load(path.join("data", "xor_train_data.npz"))
-    train_inputs = xor_data["inputs"]
-    train_outputs = xor_data["outputs"]
-elif args.task_name == "regression":
-    nonlinear_data = np.load(path.join("data", "nonlinear_regression_data.npz"))
-    train_inputs = nonlinear_data["inputs"]
-    train_outputs = nonlinear_data["outputs"]
-else: 
-    raise ValueError(f"Unknown task: {args.task_name}")
+if args.dataset is not None:
+    data = np.load(args.dataset)
+    train_inputs = data["inputs"]
+    train_outputs = data["outputs"]
+else:
+    if args.task_name == "xor":
+        xor_data = np.load(path.join("data", "xor_train_data.npz"))
+        train_inputs = xor_data["inputs"]
+        train_outputs = xor_data["outputs"]
+    elif args.task_name == "regression":
+        nonlinear_data = np.load(path.join("data", "nonlinear_regression_data.npz"))
+        train_inputs = nonlinear_data["inputs"]
+        train_outputs = nonlinear_data["outputs"]
+    else: 
+        raise ValueError(f"Unknown task: {args.task_name}")
 
 # Initialize model
 try:
@@ -102,15 +109,15 @@ total_weights = []
 date = '{}'.format( datetime.datetime.now().strftime('%Y-%m-%d-%H-%M') )
 run_name = f'{args.name}_{args.task_name}_{args.model_type}_lr_{args.learning_rate}_{date}'
 checkpoint_path = path.join("checkpoints", run_name)
-os.makedirs(checkpoint_path)
+os.makedirs(checkpoint_path, exist_ok=True)
 
 # initialize logging
 wandb.init(project='transistor-networks', name=run_name, config=args)
 
 # save hyperparameters
 print(args)
-with open(os.path.join(checkpoint_path,'args.pkl'), 'wb') as fh:
-    pickle.dump(args, fh)
+with open(os.path.join(checkpoint_path,'args.json'), 'w') as fh:
+    json.dump(vars(args), fh, indent=4)
 
 start = time.time()
 
@@ -143,12 +150,20 @@ for i in tqdm.trange(args.num_checkpoints):
 
     # generate plt plot of intermediate and save to wandb
     fig = plt.figure()
-    L_0 = -0.087
-    plt.imshow(intermediate_preds[-1].reshape(2, 2) / L_0, vmin=-1, vmax=1)
+    if args.dataset is not None and "no_scale" in args.dataset:
+        plt.imshow(intermediate_preds[-1].reshape(2, 2), vmin=-1, vmax=1)
 
-    for m in range(2):
-        for n in range(2):
-            plt.text(n, m, f"{intermediate_preds[-1].reshape(2, 2)[m, n]/L_0:.2f} $L_0$", ha='center', va='center', color='white')
+        for m in range(2):
+            for n in range(2):
+                plt.text(n, m, f"{intermediate_preds[-1].reshape(2, 2)[m, n]:.2f}", ha='center', va='center', color='white')
+    else:
+        L_0 = -0.087
+        plt.imshow(intermediate_preds[-1].reshape(2, 2) / L_0, vmin=-1, vmax=1)
+
+        for m in range(2):
+            for n in range(2):
+                plt.text(n, m, f"{intermediate_preds[-1].reshape(2, 2)[m, n]/L_0:.2f} $L_0$", ha='center', va='center', color='white')
+
     wandb.log({"intermediate_plot": wandb.Image(fig)})
 
 
