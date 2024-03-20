@@ -1,3 +1,4 @@
+import argparse
 from PySpice.Unit import *
 import PySpice
 import numpy as np
@@ -8,13 +9,29 @@ from spice_net import *
 import pickle
 import time
 import tqdm
+import datetime
+from os import path
+import os
+import wandb
 
 # ngspice
 PySpice.Spice.Simulation.CircuitSimulator.DEFAULT_SIMULATOR = "ngspice-subprocess"
 
+# Define command-line arguments
+parser = argparse.ArgumentParser(description='Run a single experimental run.')
+parser.add_argument('name', type=str, help='Name of the experiment')
+parser.add_argument('task_name', type=str, help='Name of the task')
+parser.add_argument('model_type', type=str, help='Type of model to use')
+parser.add_argument('--learning_rate', type=float, default=0.1, help='Learning rate (default: 0.1)')
+parser.add_argument('--nudge_factor', type=float, default=0.5, help='Nudge factor (default: 0.5)')
+parser.add_argument('--num_iterations', type=int, default=100000, help='Number of iterations (default: 100000)')
+parser.add_argument('--num_checkpoints', type=int, default=20, help='Number of checkpoints (default: 20)')
+
+# Parse command-line arguments
+args = parser.parse_args()
 
 # XOR task
-def init_model_xor(name, cls):
+def init_model_xor(name, cls, eta=0.5):
     np.random.seed(0)
 
     grid_graph = nx.grid_graph([4, 4], periodic=True)
@@ -27,87 +44,6 @@ def init_model_xor(name, cls):
     node_cfg = (np.array([[5, 16], [7, 16], [13, 16], [15, 16]]), np.array([[10, 0]]))
     return cls(name, con_graph=grid_graph, node_cfg=node_cfg, epsilon=1e-16)
     # TODO: look for checkpoints and load them if found
-
-experiments = ["ground_reference_xor4", "source_reference_xor4"]
-classes = [GroundReferenceNetwork, TransistorNetwork]
-
-# load data
-xor_data = np.load("data/xor_train_data.npz")
-train_inputs = xor_data["inputs"]
-train_outputs = xor_data["outputs"]
-
-# define parameters
-eta = 0.5
-gamma = 0.01 * 1 / eta
-total_steps = 100000
-checkpoints = 20
-
-# experiment runs
-for name, cls in zip(experiments, classes):
-    model = init_model_xor(name, cls)
-
-    e1, e2 = [], []
-    for E in model.edges:
-        a, b = list(map(int, E.circ.node_names[:2]))
-        e1.append(a)
-        e2.append(b)
-
-    intermediate_preds = []
-    total_loss = []
-    total_updates = []
-    total_weights = []
-
-    start = time.time()
-
-    # training loop, total_epochs
-    for i in tqdm.trange(checkpoints):
-        this_steps = min(
-            total_steps // checkpoints, total_steps - i * (total_steps // checkpoints)
-        )
-        random_samples = np.random.choice(
-            len(train_inputs), size=this_steps, replace=True
-        )
-        preds = np.empty(this_steps)
-        updates = np.empty((this_steps, len(model.edges)))
-
-        for j in tqdm.trange(this_steps, leave=False):
-            model, pred, update = step_network(
-                model,
-                train_inputs[random_samples[j]],
-                train_outputs[random_samples[j]],
-                e1, 
-                e2,
-                eta=eta,
-                gamma=gamma,
-            )
-            preds[j] = pred.item()
-            updates[j] = update
-
-        intermediate_preds.append(model.predict(train_inputs))
-
-        total_loss.append(((train_outputs[random_samples].squeeze() - preds) ** 2))
-        total_updates.append(updates)
-        total_weights.append([E.get_val() for E in model.edges])
-
-        with open(f"checkpoints/{name}_{i}.pkl", "wb") as f:
-            pickle.dump(
-                dict(
-                    total_loss=total_loss,
-                    total_updates=total_updates,
-                    total_weights=total_weights,
-                    intermediate_preds=intermediate_preds,
-                    eta=eta,
-                    gamma=gamma,
-                ),
-                f,
-            )
-
-    end = time.time()
-    print(f"{name} took {end - start} seconds")
-
-experiments_2 = ["ground_reference_nonlinear4", "source_reference_nonlinear4"]
-classes_2 = [GroundReferenceNetwork, TransistorNetwork]
-
 
 # Nonlinear task
 def init_model_nonlinear(name, cls):
@@ -126,74 +62,112 @@ def init_model_nonlinear(name, cls):
     return cls(name, con_graph=grid_graph, node_cfg=node_cfg, epsilon=1e-16)
 
 
-# load data
-nonlinear_data = np.load("data/nonlinear_regression_data.npz")
-train_inputs = nonlinear_data["inputs"]
-train_outputs = nonlinear_data["outputs"]
+    
+# Load data
+if args.task_name == "xor":
+    xor_data = np.load(path.join("data", "xor_train_data.npz"))
+    train_inputs = xor_data["inputs"]
+    train_outputs = xor_data["outputs"]
+elif args.task_name == "regression":
+    nonlinear_data = np.load(path.join("data", "nonlinear_regression_data.npz"))
+    train_inputs = nonlinear_data["inputs"]
+    train_outputs = nonlinear_data["outputs"]
+else: 
+    raise ValueError(f"Unknown task: {args.task_name}")
 
-# define parameters
-eta = 1.0
-gamma = 0.01 * 1 / eta
-total_steps = 100000
-checkpoints = 20
+# Initialize model
+try:
+    network_type = {"ground_reference": GroundReferenceNetwork, "source_reference": TransistorNetwork}[args.model_type]
+except KeyError:
+    raise ValueError(f"Unknown model type: {args.model_type}")
 
-for name, cls in zip(experiments_2, classes_2):
-    model = init_model_nonlinear(name, cls)
+if args.task_name == "xor":
+    model = init_model_xor(args.name, network_type)
+elif args.task_name == "regression":
+    model = init_model_nonlinear(args.name, network_type)
 
-    e1, e2 = [], []
-    for E in model.edges:
-        a, b = list(map(int, E.circ.node_names[:2]))
-        e1.append(a)
-        e2.append(b)
+e1, e2 = [], []
+for E in model.edges:
+    a, b = list(map(int, E.circ.node_names[:2]))
+    e1.append(a)
+    e2.append(b)
 
-    intermediate_preds = []
-    total_loss = []
-    total_updates = []
-    total_weights = []
+# Run a single experimental run
+intermediate_preds = []
+total_loss = []
+total_updates = []
+total_weights = []
 
-    start = time.time()
+# create logging dir
+date = '{}'.format( datetime.datetime.now().strftime('%Y-%m-%d-%H-%M') )
+run_name = f'{args.name}_{args.task_name}_{args.model_type}_lr_{args.learning_rate}_{date}'
+checkpoint_path = path.join("checkpoints", run_name)
+os.makedirs(checkpoint_path)
 
-    for i in tqdm.trange(checkpoints):
-        this_steps = min(
-            total_steps // checkpoints, total_steps - i * (total_steps // checkpoints)
+# initialize logging
+wandb.init(project='transistor-networks', name=run_name, config=args)
+
+# save hyperparameters
+print(args)
+with open(os.path.join(checkpoint_path,'args.pkl'), 'wb') as fh:
+    pickle.dump(args, fh)
+
+start = time.time()
+
+for i in tqdm.trange(args.num_checkpoints):
+    this_steps = min(
+        args.num_iterations // args.num_checkpoints, args.num_iterations - i * (args.num_iterations // args.num_checkpoints)
+    )
+    random_samples = np.random.choice(
+        len(train_inputs), size=this_steps, replace=True
+    )
+    preds = np.empty(this_steps)
+    updates = np.empty((this_steps, len(model.edges)))
+
+    for j in tqdm.trange(this_steps, leave=False):
+        model, pred, update = step_network(
+            model,
+            train_inputs[random_samples[j]],
+            train_outputs[random_samples[j]],
+            e1, 
+            e2,
+            eta=args.learning_rate,
+            gamma=args.nudge_factor,
         )
-        random_samples = np.random.choice(
-            len(train_inputs), size=this_steps, replace=True
+        preds[j] = pred.item()
+        updates[j] = update
+        wandb.log({"loss": ((train_outputs[random_samples[j]].squeeze() - pred) ** 2).item(), "step": i * (args.num_iterations // args.num_checkpoints) + j})
+
+    intermediate_preds.append(model.predict(train_inputs))
+    wandb.log({"intermediate_pred": intermediate_preds[-1]})
+
+    # generate plt plot of intermediate and save to wandb
+    fig = plt.figure()
+    L_0 = -0.087
+    plt.imshow(intermediate_preds[-1].reshape(2, 2) / L_0, vmin=-1, vmax=1)
+
+    for m in range(2):
+        for n in range(2):
+            plt.text(n, m, f"{intermediate_preds[-1].reshape(2, 2)[m, n]/L_0:.2f} $L_0$", ha='center', va='center', color='white')
+    wandb.log({"intermediate_plot": wandb.Image(fig)})
+
+
+    total_loss.append(((train_outputs[random_samples].squeeze() - preds) ** 2))
+    total_updates.append(updates)
+    total_weights.append([E.get_val() for E in model.edges])
+
+    with open(path.join(checkpoint_path, f"checkpoint_{i}.pkl"), "wb") as f:
+        pickle.dump(
+            dict(
+                total_loss=total_loss,
+                total_updates=total_updates,
+                total_weights=total_weights,
+                intermediate_preds=intermediate_preds,
+                eta=args.learning_rate,
+                gamma=args.nudge_factor,
+            ),
+            f,
         )
-        preds = np.empty(this_steps)
-        updates = np.empty((this_steps, len(model.edges)))
 
-        for j in tqdm.trange(this_steps, leave=False):
-            model, pred, update = step_network(
-                model,
-                train_inputs[random_samples[j]],
-                train_outputs[random_samples[j]],
-                e1,
-                e2,
-                eta=eta,
-                gamma=gamma,
-            )
-            preds[j] = pred.item()
-            updates[j] = update
-
-        intermediate_preds.append(model.predict(train_inputs))
-
-        total_loss.append(((train_outputs[random_samples].squeeze() - preds) ** 2))
-        total_updates.append(updates)
-        total_weights.append([E.get_val() for E in model.edges])
-
-        with open(f"checkpoints/{name}_{i}.pkl", "wb") as f:
-            pickle.dump(
-                dict(
-                    total_loss=total_loss,
-                    total_updates=total_updates,
-                    total_weights=total_weights,
-                    intermediate_preds=intermediate_preds,
-                    eta=eta,
-                    gamma=gamma,
-                ),
-                f,
-            )
-
-    end = time.time()
-    print(f"{name} took {end - start} seconds")
+end = time.time()
+print(f"{args.name} took {end - start} seconds")

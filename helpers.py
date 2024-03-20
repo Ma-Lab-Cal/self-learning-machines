@@ -33,7 +33,36 @@ def get_content_cocontent(VGS, vmin=-0.5, vmax=5, n=1000):
 
     return content_table, cocontent_table, I, V
 
-def train(net: Union[LinearNetwork, TransistorNetwork], xs, ys, epochs, gamma = 10, eta = 0.1, l=0, log_steps=1, shuffle=True):
+def step_network(net: AbstractNetwork, x, y, e1, e2, gamma = 10, eta = 0.1, l = 0):
+    n_nodes = len(net.__nodes__)
+
+    free_analysis = net._solve(x)
+    free = np.array([u_V(free_analysis.nodes[str(i)]) for i in net.__nodes__])
+
+    preds = np.zeros((len(net.outputs), 1))
+
+    for k, v in enumerate(net.outputs):
+        a, b = v.node_names
+        preds[k] = u_V(free_analysis.nodes[a] - free_analysis.nodes[b])
+    nudges = eta * y + (1-eta) * preds
+
+    clamped = net.solve(x, nudges.reshape(y.shape))
+
+    free_rep = np.tile(free, [n_nodes, 1])
+    clamped_rep = np.tile(clamped, [n_nodes,1])
+
+    delta_free = free_rep - free_rep.T
+    delta_clamped = clamped_rep - clamped_rep.T
+
+    update = -gamma * (delta_clamped**2 - delta_free**2)
+
+    trainable_updates = update[e1, e2]
+
+    net.update(trainable_updates)
+
+    return net, preds, trainable_updates
+
+def train(net: AbstractNetwork, xs, ys, epochs, gamma = 10, eta = 0.1, l = 0, log_steps=1, shuffle=True):
     """Training loop
 
     Args:
@@ -57,9 +86,10 @@ def train(net: Union[LinearNetwork, TransistorNetwork], xs, ys, epochs, gamma = 
     n_edges = len(net.edges)
     edges = net.edges
 
-    loss = np.zeros(epochs//log_steps+1)
-    weights = np.empty((epochs//log_steps+1, xs.shape[0], n_edges))
-    updates = np.empty((epochs//log_steps, xs.shape[0], n_edges))
+    step_interval = int(np.ceil(epochs / log_steps)) # todo: better name for this? 
+    loss = np.zeros(step_interval+1)
+    weights = np.empty((step_interval+1, xs.shape[0], n_edges))
+    updates = np.empty((step_interval, xs.shape[0], n_edges))
 
     # Calculate initial accuracy 
     pred = net.predict(xs)
@@ -93,6 +123,8 @@ def train(net: Union[LinearNetwork, TransistorNetwork], xs, ys, epochs, gamma = 
 
             clamped = net.solve(x, nudges.reshape(y.shape))
 
+            # TODO: update computation can be optimized since most 
+            # values here are unused, worth?
             free_rep = np.tile(free, [n_nodes, 1])
             clamped_rep = np.tile(clamped, [n_nodes,1])
 
@@ -105,14 +137,14 @@ def train(net: Union[LinearNetwork, TransistorNetwork], xs, ys, epochs, gamma = 
 
             net.update(trainable_updates) 
 
-            if i % log_steps == 0:
+            if (i % log_steps) == 0:
                 updates[i // log_steps, j] = trainable_updates
                 weights[(i // log_steps) + 1, j] = [E.get_val() for E in net.edges]
 
         preds = net.predict(xs)
         loss[(i // log_steps) + 1] = np.mean((ys - preds)**2)
 
-        if i % log_steps == 0:
+        if (i % log_steps) == 0:
             print(f'Epoch {i+1}: {loss[(i // log_steps) + 1]}')
 
     return net, loss, updates, weights
