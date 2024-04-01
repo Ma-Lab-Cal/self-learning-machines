@@ -90,6 +90,7 @@ class AbstractNetwork(Circuit):
             raise ValueError(f'input should be vector or 2d matrix, but got input of shape {inputs.shape}')
 
         simulator = self.simulator()
+        simulator.options('KLU')
         analysis = simulator.dc(Vindex=slice(1, n_examples, 1))
 
         # populate ground reading with zeros for downstream convenience 
