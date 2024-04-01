@@ -1,5 +1,4 @@
 import os
-import ltspice
 from PySpice.Spice.Netlist import Circuit, SubCircuit
 from PySpice.Spice.Parser import SpiceParser
 from PySpice.Probe.WaveForm import WaveForm
