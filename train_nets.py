@@ -16,7 +16,9 @@ import os
 import wandb
 
 # ngspice
-PySpice.Spice.Simulation.CircuitSimulator.DEFAULT_SIMULATOR = "ngspice-subprocess"
+PySpice.Spice.Simulation.CircuitSimulator.DEFAULT_SIMULATOR = "ngspice-subprocess" 
+import PySpice.Spice.NgSpice.Server
+PySpice.Spice.NgSpice.Server.SpiceServer.SPICE_COMMAND = 'ngspice'
 
 # Define command-line arguments
 parser = argparse.ArgumentParser(description='Run a single experimental run.')
