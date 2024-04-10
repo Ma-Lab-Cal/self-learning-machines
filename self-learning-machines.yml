@@ -1,4 +1,4 @@
-name: circuit-sim-2
+name: circuit-sim
 channels:
   - conda-forge
   - defaults
