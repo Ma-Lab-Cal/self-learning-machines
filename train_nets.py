@@ -140,8 +140,8 @@ for i in tqdm.trange(args.num_checkpoints):
             train_outputs[random_samples[j]],
             e1, 
             e2,
-            eta=args.learning_rate,
-            gamma=args.nudge_factor,
+            eta=args.nudge_factor,
+            gamma=args.learning_rate,
         )
         preds[j] = pred.item()
         updates[j] = update
@@ -168,17 +168,16 @@ for i in tqdm.trange(args.num_checkpoints):
 
     wandb.log({"intermediate_plot": wandb.Image(fig)})
 
-
-    total_loss.append(((train_outputs[random_samples].squeeze() - preds) ** 2))
-    total_updates.append(updates)
-    total_weights.append([E.get_val() for E in model.edges])
+    # total_loss.append(((train_outputs[random_samples].squeeze() - preds) ** 2))
+    # total_updates.append(updates)
+    # total_weights.append([E.get_val() for E in model.edges])
 
     with open(path.join(checkpoint_path, f"checkpoint_{i}.pkl"), "wb") as f:
         pickle.dump(
             dict(
-                total_loss=total_loss,
-                total_updates=total_updates,
-                total_weights=total_weights,
+                loss=((train_outputs[random_samples].squeeze() - preds) ** 2),
+                updates=updates,
+                weights=[E.get_val() for E in model.edges],
                 intermediate_preds=intermediate_preds,
                 eta=args.learning_rate,
                 gamma=args.nudge_factor,
