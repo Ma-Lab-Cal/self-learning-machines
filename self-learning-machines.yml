@@ -1,0 +1,16 @@
+name: circuit-sim-2
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.9
+  - matplotlib
+  - networkx
+  - numpy
+  - pip
+  - jupyter
+  - pip:
+      - pyspice
+      - ltspice
+      - tqdm
+      - wandb
