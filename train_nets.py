@@ -109,7 +109,7 @@ total_weights = []
 
 # create logging dir
 date = '{}'.format( datetime.datetime.now().strftime('%Y-%m-%d-%H-%M') )
-run_name = f'{args.name}_{args.task_name}_{args.model_type}_lr_{args.learning_rate}_{date}'
+run_name = f'{args.name}_{args.task_name}_{args.model_type}_lr_{args.learning_rate}_eta_{args.nudge_factor}_{date}'
 checkpoint_path = path.join("checkpoints", run_name)
 os.makedirs(checkpoint_path, exist_ok=True)
 
