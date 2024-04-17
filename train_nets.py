@@ -30,13 +30,14 @@ parser.add_argument('--nudge_factor', type=float, default=0.5, help='Nudge facto
 parser.add_argument('--num_iterations', type=int, default=100000, help='Number of iterations (default: 100000)')
 parser.add_argument('--num_checkpoints', type=int, default=20, help='Number of checkpoints (default: 20)')
 parser.add_argument('--dataset', type=str, default=None, help='Number of checkpoints. Defaults to dataset from paper')
+parser.add_argument('--seed', type=int, default=0, help='Random seed used for initialization (default: 0)')
 
 # Parse command-line arguments
 args = parser.parse_args()
 
 # XOR task
 def init_model_xor(name, cls, eta=0.5):
-    np.random.seed(0)
+    np.random.seed(args.seed)
 
     grid_graph = nx.grid_graph([4, 4], periodic=True)
     grid_graph.add_node((-1, -1))
@@ -51,7 +52,7 @@ def init_model_xor(name, cls, eta=0.5):
 
 # Nonlinear task
 def init_model_nonlinear(name, cls):
-    np.random.seed(0)
+    np.random.seed(args.seed)
 
     grid_graph = nx.grid_graph([4, 4], periodic=True)
     grid_graph.add_node((-1, -1))
@@ -151,22 +152,23 @@ for i in tqdm.trange(args.num_checkpoints):
     wandb.log({"intermediate_pred": intermediate_preds[-1]})
 
     # generate plt plot of intermediate and save to wandb
-    fig = plt.figure()
-    if args.dataset is not None and "no_scale" in args.dataset:
-        plt.imshow(intermediate_preds[-1].reshape(2, 2), vmin=-1, vmax=1)
+    if args.task_name == "xor":
+        fig = plt.figure()
+        if args.dataset is not None and "no_scale" in args.dataset:
+            plt.imshow(intermediate_preds[-1].reshape(2, 2), vmin=-1, vmax=1)
 
-        for m in range(2):
-            for n in range(2):
-                plt.text(n, m, f"{intermediate_preds[-1].reshape(2, 2)[m, n]:.2f}", ha='center', va='center', color='white')
-    else:
-        L_0 = -0.087
-        plt.imshow(intermediate_preds[-1].reshape(2, 2) / L_0, vmin=-1, vmax=1)
+            for m in range(2):
+                for n in range(2):
+                    plt.text(n, m, f"{intermediate_preds[-1].reshape(2, 2)[m, n]:.2f}", ha='center', va='center', color='white')
+        else:
+            L_0 = -0.087
+            plt.imshow(intermediate_preds[-1].reshape(2, 2) / L_0, vmin=-1, vmax=1)
 
-        for m in range(2):
-            for n in range(2):
-                plt.text(n, m, f"{intermediate_preds[-1].reshape(2, 2)[m, n]/L_0:.2f} $L_0$", ha='center', va='center', color='white')
+            for m in range(2):
+                for n in range(2):
+                    plt.text(n, m, f"{intermediate_preds[-1].reshape(2, 2)[m, n]/L_0:.2f} $L_0$", ha='center', va='center', color='white')
 
-    wandb.log({"intermediate_plot": wandb.Image(fig)})
+        wandb.log({"intermediate_plot": wandb.Image(fig)})
 
     # total_loss.append(((train_outputs[random_samples].squeeze() - preds) ** 2))
     # total_updates.append(updates)
@@ -179,8 +181,9 @@ for i in tqdm.trange(args.num_checkpoints):
                 updates=updates,
                 weights=[E.get_val() for E in model.edges],
                 intermediate_preds=intermediate_preds,
-                eta=args.learning_rate,
-                gamma=args.nudge_factor,
+                eta=args.nudge_factor,
+                gamma=args.learning_rate,
+                seed=args.seed,
             ),
             f,
         )

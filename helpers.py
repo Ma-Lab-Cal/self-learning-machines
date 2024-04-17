@@ -6,6 +6,7 @@ import os
 import ltspice
 from scipy.integrate import cumtrapz
 import matplotlib.pyplot as plt
+import pickle
 
 def get_content_cocontent(VGS, vmin=-0.5, vmax=5, n=1000):
     test_circuit = f"""
@@ -195,3 +196,30 @@ def visualize(net: Union[LinearNetwork, TransistorNetwork], pos=None):
     plt.legend()
     plt.title(f'Network: {net.name}')
 
+def load_checkpoint(path):
+    # sample checkpoint path: 'checkpoints/paper_regression_ground_reference_lr_11.0_eta_1.0_2024-04-10-19-39'
+
+    # split path into directory and file name
+    _, file = os.path.split(path)
+
+    i = 0
+    loss=[]
+    updates=[]
+    weights=[]
+    intermediate_preds=[]
+    eta=None
+    gamma=None
+    seed=None
+    while os.exists(os.path.join(path, f'checkpoint{i}.pkl')):
+        with open(os.path.join(path, f'checkpoint{i}.pkl'), 'rb') as f:
+            d = pickle.load(f)
+            loss.append(d['loss'])
+            updates.append(d['updates'])
+            weights.append(d['weights'])
+            intermediate_preds.append(d['intermediate_preds'])
+            eta = d['eta']
+            gamma = d['gamma']
+            seed = d['seed']
+        i += 1
+
+    return loss, updates, weights, intermediate_preds, eta, gamma, seed
