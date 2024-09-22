@@ -90,6 +90,7 @@ class AbstractNetwork(Circuit):
 
         simulator = self.simulator()
         # simulator.options('KLU')
+        simulator.options("output", "resources")
         analysis = simulator.dc(Vindex=slice(1, n_examples, 1))
 
         # populate ground reading with zeros for downstream convenience 
