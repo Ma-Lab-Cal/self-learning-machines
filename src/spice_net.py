@@ -202,9 +202,9 @@ class Transistor_edge(SubCircuitFactory):
 
         self.V(1, "t_G", "t_S", r"{vgs}")
         self.R(1, "t_D", "t_S", r_shunt)
-        self.MOSFET(1, "t_D", "t_G", "t_S", "t_S", model="Ideal")
-        self.model("Ideal", "NMOS", level=1)
-    
+
+        # assume models are already defined globally
+        self.MOSFET(1, "t_D", "t_G", "t_S", "t_S", model="Ideal")    
     # def __repr__(self):
     #     return f"Transistor_edge({self.name}, vgs={self.V1.dc_value}, RShunt={self.R1.resistance})"
     
@@ -318,7 +318,7 @@ class TransistorNetwork(EdgeNetwork):
             solver=solver,
             epsilon=epsilon,
         )
-
+        self.model("Ideal", "NMOS", level=1)
 
 # class ScaledTransistorNetwork(EdgeNetwork):
 #     def __init__(self, name: str, con_graph: nx.DiGraph, node_cfg, epsilon=1e-9):
