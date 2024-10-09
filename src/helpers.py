@@ -37,14 +37,15 @@ def get_content_cocontent(VGS, vmin=-0.5, vmax=5, n=1000):
 def step_network(net: AbstractNetwork, x, y, e1, e2, gamma = 10, eta = 0.1, l = 0):
     n_nodes = len(net.__nodes__)
 
-    free_analysis = net._solve(x)
-    free = np.array([u_V(free_analysis.nodes[str(i)]) for i in net.__nodes__])
+    free = net.solve(x)
+    # free = np.array([u_V(free_analysis.nodes[str(i)]) for i in net.__nodes__])
 
     preds = np.zeros((len(net.outputs), 1))
 
     for k, v in enumerate(net.outputs):
         a, b = v.node_names
-        preds[k] = u_V(free_analysis.nodes[a] - free_analysis.nodes[b])
+        a, b = int(a), int(b)
+        preds[k] = u_V(free[a] - free[b,:])
     nudges = eta * y + (1-eta) * preds
 
     clamped = net.solve(x, nudges.reshape(y.shape))
@@ -112,14 +113,16 @@ def train(net: AbstractNetwork, xs, ys, epochs, gamma = 10, eta = 0.1, l = 0, lo
         for j, x, y in zip(range(xs.shape[0]), xs, ys):
             # compute nudges from free state without an additional
             # expensive call to solve: saves roughly 33% computation time
-            free_analysis = net._solve(x)
-            free = np.array([u_V(free_analysis.nodes[str(i)]) for i in net.__nodes__])
+
+            free = net.solve(x)
 
             preds = np.zeros((len(net.outputs), 1))
 
             for k, v in enumerate(net.outputs):
                 a, b = v.node_names
-                preds[k] = u_V(free_analysis.nodes[a] - free_analysis.nodes[b])
+                print("HHHH")
+                print(preds.shape, free.shape)
+                preds[k] = u_V(free[a,:] - free[b,:])
             nudges = eta * y + (1-eta) * preds
 
             clamped = net.solve(x, nudges.reshape(y.shape))

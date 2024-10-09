@@ -32,12 +32,9 @@ parser.add_argument('--num_checkpoints', type=int, default=20, help='Number of c
 parser.add_argument('--dataset', type=str, default=None, help='Number of checkpoints. Defaults to dataset from paper')
 parser.add_argument('--seed', type=int, default=0, help='Random seed used for initialization (default: 0)')
 
-# Parse command-line arguments
-args = parser.parse_args()
-
 # XOR task
-def init_model_xor(name, cls, eta=0.5):
-    np.random.seed(args.seed)
+def init_model_xor(name, cls, seed, solver, eta=0.5):
+    np.random.seed(seed)
 
     grid_graph = nx.grid_graph([4, 4], periodic=True)
     grid_graph.add_node((-1, -1))
@@ -47,12 +44,12 @@ def init_model_xor(name, cls, eta=0.5):
         # grid_graph[e[0]][e[1]]['weight'] = 5                           # init to max value
 
     node_cfg = (np.array([[5, 16], [7, 16], [13, 16], [15, 16]]), np.array([[10, 0]]))
-    return cls(name, con_graph=grid_graph, node_cfg=node_cfg, epsilon=1e-16)
+    return cls(name, con_graph=grid_graph, node_cfg=node_cfg, solver=solver, epsilon=1e-16)
     # TODO: look for checkpoints and load them if found
 
 # Nonlinear task
-def init_model_nonlinear(name, cls):
-    np.random.seed(args.seed)
+def init_model_nonlinear(name, cls, seed):
+    np.random.seed(seed)
 
     grid_graph = nx.grid_graph([4, 4], periodic=True)
     grid_graph.add_node((-1, -1))
@@ -66,123 +63,127 @@ def init_model_nonlinear(name, cls):
     node_cfg = (np.array([[8, 16], [2, 16], [15, 16]]), np.array([[10, 16]]))
     return cls(name, con_graph=grid_graph, node_cfg=node_cfg, epsilon=1e-16)
 
+DATA_DIR = "../data"
 
-    
-# Load data
-if args.dataset is not None:
-    data = np.load(args.dataset)
-    train_inputs = data["inputs"]
-    train_outputs = data["outputs"]
-else:
+if __name__ == "__main__":    
+    # Parse command-line arguments
+    args = parser.parse_args()
+
+    # Load data
+    if args.dataset is not None:
+        data = np.load(args.dataset)
+        train_inputs = data["inputs"]
+        train_outputs = data["outputs"]
+    else:
+        if args.task_name == "xor":
+            xor_data = np.load(path.join(DATA_DIR, "xor_train_data.npz"))
+            train_inputs = xor_data["inputs"]
+            train_outputs = xor_data["outputs"]
+        elif args.task_name == "regression":
+            nonlinear_data = np.load(path.join(DATA_DIR, "nonlinear_regression_data.npz"))
+            train_inputs = nonlinear_data["inputs"]
+            train_outputs = nonlinear_data["outputs"]
+        else: 
+            raise ValueError(f"Unknown task: {args.task_name}")
+
+    # Initialize model
+    try:
+        network_type = {"ground_reference": GroundReferenceNetwork, "source_reference": TransistorNetwork}[args.model_type]
+    except KeyError:
+        raise ValueError(f"Unknown model type: {args.model_type}")
+
     if args.task_name == "xor":
-        xor_data = np.load(path.join("data", "xor_train_data.npz"))
-        train_inputs = xor_data["inputs"]
-        train_outputs = xor_data["outputs"]
+        model = init_model_xor(args.name, network_type, args.seed)
     elif args.task_name == "regression":
-        nonlinear_data = np.load(path.join("data", "nonlinear_regression_data.npz"))
-        train_inputs = nonlinear_data["inputs"]
-        train_outputs = nonlinear_data["outputs"]
-    else: 
-        raise ValueError(f"Unknown task: {args.task_name}")
+        model = init_model_nonlinear(args.name, network_type, args.seed)
 
-# Initialize model
-try:
-    network_type = {"ground_reference": GroundReferenceNetwork, "source_reference": TransistorNetwork}[args.model_type]
-except KeyError:
-    raise ValueError(f"Unknown model type: {args.model_type}")
+    e1, e2 = [], []
+    for E in model.edges:
+        a, b = list(map(int, E.circ.node_names[:2]))
+        e1.append(a)
+        e2.append(b)
 
-if args.task_name == "xor":
-    model = init_model_xor(args.name, network_type)
-elif args.task_name == "regression":
-    model = init_model_nonlinear(args.name, network_type)
+    # Run a single experimental run
+    intermediate_preds = []
+    total_loss = []
+    total_updates = []
+    total_weights = []
 
-e1, e2 = [], []
-for E in model.edges:
-    a, b = list(map(int, E.circ.node_names[:2]))
-    e1.append(a)
-    e2.append(b)
+    # create logging dir
+    date = '{}'.format( datetime.datetime.now().strftime('%Y-%m-%d-%H-%M') )
+    run_name = f'{args.name}_{args.task_name}_{args.model_type}_lr_{args.learning_rate}_eta_{args.nudge_factor}_{date}'
+    checkpoint_path = path.join("checkpoints", run_name)
+    os.makedirs(checkpoint_path, exist_ok=True)
 
-# Run a single experimental run
-intermediate_preds = []
-total_loss = []
-total_updates = []
-total_weights = []
+    # initialize logging
+    wandb.init(project='transistor-networks', name=run_name, config=args)
 
-# create logging dir
-date = '{}'.format( datetime.datetime.now().strftime('%Y-%m-%d-%H-%M') )
-run_name = f'{args.name}_{args.task_name}_{args.model_type}_lr_{args.learning_rate}_eta_{args.nudge_factor}_{date}'
-checkpoint_path = path.join("checkpoints", run_name)
-os.makedirs(checkpoint_path, exist_ok=True)
+    # save hyperparameters
+    print(args)
+    with open(os.path.join(checkpoint_path,'args.json'), 'w') as fh:
+        json.dump(vars(args), fh, indent=4)
 
-# initialize logging
-wandb.init(project='transistor-networks', name=run_name, config=args)
+    start = time.time()
 
-# save hyperparameters
-print(args)
-with open(os.path.join(checkpoint_path,'args.json'), 'w') as fh:
-    json.dump(vars(args), fh, indent=4)
-
-start = time.time()
-
-for i in tqdm.trange(args.num_checkpoints):
-    this_steps = min(
-        args.num_iterations // args.num_checkpoints, args.num_iterations - i * (args.num_iterations // args.num_checkpoints)
-    )
-    random_samples = np.random.choice(
-        len(train_inputs), size=this_steps, replace=True
-    )
-    preds = np.empty(this_steps)
-    updates = np.empty((this_steps, len(model.edges)))
-
-    for j in tqdm.trange(this_steps, leave=False):
-        model, pred, update = step_network(
-            model,
-            train_inputs[random_samples[j]],
-            train_outputs[random_samples[j]],
-            e1, 
-            e2,
-            eta=args.nudge_factor,
-            gamma=args.learning_rate,
+    for i in tqdm.trange(args.num_checkpoints):
+        this_steps = min(
+            args.num_iterations // args.num_checkpoints, args.num_iterations - i * (args.num_iterations // args.num_checkpoints)
         )
-        preds[j] = pred.item()
-        updates[j] = update
-        wandb.log({"loss": ((train_outputs[random_samples[j]].squeeze() - pred) ** 2).item(), "step": i * (args.num_iterations // args.num_checkpoints) + j})
+        random_samples = np.random.choice(
+            len(train_inputs), size=this_steps, replace=True
+        )
+        preds = np.empty(this_steps)
+        updates = np.empty((this_steps, len(model.edges)))
 
-    intermediate_preds.append(model.predict(train_inputs))
-    wandb.log({"intermediate_pred": intermediate_preds[-1]})
-
-    # generate plt plot of intermediate and save to wandb
-    if args.task_name == "xor":
-        fig = plt.figure()
-        if args.dataset is not None and "no_scale" in args.dataset:
-            plt.imshow(intermediate_preds[-1].reshape(2, 2), vmin=-1, vmax=1)
-
-            for m in range(2):
-                for n in range(2):
-                    plt.text(n, m, f"{intermediate_preds[-1].reshape(2, 2)[m, n]:.2f}", ha='center', va='center', color='white')
-        else:
-            L_0 = -0.087
-            plt.imshow(intermediate_preds[-1].reshape(2, 2) / L_0, vmin=-1, vmax=1)
-
-            for m in range(2):
-                for n in range(2):
-                    plt.text(n, m, f"{intermediate_preds[-1].reshape(2, 2)[m, n]/L_0:.2f} $L_0$", ha='center', va='center', color='white')
-
-        wandb.log({"intermediate_plot": wandb.Image(fig)})
-
-    with open(path.join(checkpoint_path, f"checkpoint_{i}.pkl"), "wb") as f:
-        pickle.dump(
-            dict(
-                loss=((train_outputs[random_samples].squeeze() - preds) ** 2),
-                updates=updates,
-                weights=[E.get_val() for E in model.edges],
-                intermediate_preds=intermediate_preds,
+        for j in tqdm.trange(this_steps, leave=False):
+            model, pred, update = step_network(
+                model,
+                train_inputs[random_samples[j]],
+                train_outputs[random_samples[j]],
+                e1, 
+                e2,
                 eta=args.nudge_factor,
                 gamma=args.learning_rate,
-                seed=args.seed,
-            ),
-            f,
-        )
+            )
+            preds[j] = pred.item()
+            updates[j] = update
+            wandb.log({"loss": ((train_outputs[random_samples[j]].squeeze() - pred) ** 2).item(), "step": i * (args.num_iterations // args.num_checkpoints) + j})
 
-end = time.time()
-print(f"{args.name} took {end - start} seconds")
+        intermediate_preds.append(model.predict(train_inputs))
+        wandb.log({"intermediate_pred": intermediate_preds[-1]})
+
+        # generate plt plot of intermediate and save to wandb
+        if args.task_name == "xor":
+            fig = plt.figure()
+            if args.dataset is not None and "no_scale" in args.dataset:
+                plt.imshow(intermediate_preds[-1].reshape(2, 2), vmin=-1, vmax=1)
+
+                for m in range(2):
+                    for n in range(2):
+                        plt.text(n, m, f"{intermediate_preds[-1].reshape(2, 2)[m, n]:.2f}", ha='center', va='center', color='white')
+            else:
+                L_0 = -0.087
+                plt.imshow(intermediate_preds[-1].reshape(2, 2) / L_0, vmin=-1, vmax=1)
+
+                for m in range(2):
+                    for n in range(2):
+                        plt.text(n, m, f"{intermediate_preds[-1].reshape(2, 2)[m, n]/L_0:.2f} $L_0$", ha='center', va='center', color='white')
+
+            wandb.log({"intermediate_plot": wandb.Image(fig)})
+
+        with open(path.join(checkpoint_path, f"checkpoint_{i}.pkl"), "wb") as f:
+            pickle.dump(
+                dict(
+                    loss=((train_outputs[random_samples].squeeze() - preds) ** 2),
+                    updates=updates,
+                    weights=[E.get_val() for E in model.edges],
+                    intermediate_preds=intermediate_preds,
+                    eta=args.nudge_factor,
+                    gamma=args.learning_rate,
+                    seed=args.seed,
+                ),
+                f,
+            )
+
+    end = time.time()
+    print(f"{args.name} took {end - start} seconds")

@@ -26,6 +26,9 @@ class AbstractNetwork(Circuit):
 
         # "hack" - add "index" voltage source to allow us to pass indexed lists of inputs
         self.V("index", "index", 0, 1)
+        self.cached_simulator = self.simulator(ngspice_shared=self.solver) # TODO: need to fix if allowing Xyce again
+        # self.cached_simulator = self.simulator(simulator='ngspice-subprocess')
+        self.cached_simulator.options("KLU")
 
     def _prepare_simulation(self, inputs, outputs=None):
         """Solves for all node voltages given differential input voltages
@@ -108,13 +111,22 @@ class AbstractNetwork(Circuit):
         self.n_examples = n_examples
 
     def _run_simulation(self):
-        simulator = self.simulator(ngspice_shared=self.solver)
-        result = simulator.dc(Vindex=slice(1, self.n_examples, 1))
+        # simulator = self.simulator(ngspice_shared=self.solver)
+        # result = simulator.dc(Vindex=slice(1, self.n_examples, 1))
+        result = self.cached_simulator.dc(Vindex=slice(1, self.n_examples, 1))
+        # result = self.cached_simulator.operating_point()
+
+        self.prev = result
 
         return result
 
     def solve(self, inputs, outputs=None):
         self._prepare_simulation(inputs, outputs)
+
+        # init_conds = {}
+        # for node in self.__nodes__:
+            
+
         result = self._run_simulation()
 
         # populate floating readings with zeros for downstream convenience
@@ -292,7 +304,7 @@ class EdgeNetwork(AbstractNetwork):
         edge_subckt = edge_class(epsilon=epsilon)
         self.subcircuit(edge_subckt)
         for n, (u, v, r) in enumerate(con_graph.edges(data="weight")):
-            edge = Transistor_edge(self.X(n + 1, edge_subckt.name, nodes_map[u], nodes_map[v], vgs=r))
+            edge = WrappedTransistorEdge(self.X(n + 1, edge_subckt.name, nodes_map[u], nodes_map[v], vgs=r))
             self.edges.append(edge)
 
     def update(self, updates):
