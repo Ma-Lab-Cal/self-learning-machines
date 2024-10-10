@@ -410,6 +410,22 @@ class TransistorNetwork(EdgeNetwork):
         self.model("NMOS", "NMOS", level=1)
         self.model("MYSW", "SW", Ron=100, Roff=1e12, Vt=0.5,)
 
+class TwinEdgeNetwork(EdgeNetwork):
+    def __init__(
+        self, name: str, con_graph: nx.DiGraph, node_cfg, solver, epsilon=1e-9
+    ):
+        super().__init__(
+            name=name,
+            edge_class=WrappedTransistorEdge,
+            con_graph=con_graph,
+            node_cfg=node_cfg,
+            solver=solver,
+            epsilon=epsilon,
+        )
+        self.model("Ideal", "NMOS", level=1)
+        self.model("NMOS", "NMOS", level=1)
+        self.model("MYSW", "SW", Ron=100, Roff=1e12, Vt=0.5,)
+
 # class ScaledTransistorNetwork(EdgeNetwork):
 #     def __init__(self, name: str, con_graph: nx.DiGraph, node_cfg, epsilon=1e-9):
 #         super().__init__(name, Scaled_Transistor_edge, con_graph, node_cfg, epsilon)
