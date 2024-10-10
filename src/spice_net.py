@@ -3,7 +3,7 @@ from PySpice.Spice.Netlist import Circuit, SubCircuit, SubCircuitFactory
 from PySpice.Spice.BasicElement import SubCircuitElement
 from PySpice.Spice.Parser import SpiceParser
 from PySpice.Probe.WaveForm import WaveForm
-from PySpice.Unit import u_V
+from PySpice.Unit import *
 import numpy as np
 import networkx as nx
 import itertools
@@ -201,10 +201,23 @@ class AbstractNetwork(Circuit):
 #         return 1.0 / self.R1.resistance
 
 
-class Transistor_edge(SubCircuitFactory):
+class LinearEdge(SubCircuitFactory):
+    """Custom edge class for PySpice. Used to create a parameterized subcircuit with a
+     variable R parameter that can be implemented repeatedly."""
+    NAME = "linear_edge"
+    NODES = ("t_D", "t_S")
+
+    def __init__(self, r=0.5, epsilon=1e-6):
+        super().__init__(r=r)
+
+        self.alpha = 1
+
+        self.R(1, "t_D", "t_S", r"{r}")  
+
+class TransistorEdge(SubCircuitFactory):
     """Custom edge class for PySpice. Used to create a parameterized subcircuit with a
      variable VGS parameter that can be implemented repeatedly."""
-    NAME = "Transistor_edge"
+    NAME = "transistor_edge"
     NODES = ("t_D", "t_S")
 
     def __init__(self, vgs=0.5, r_shunt=1e16, epsilon=1e-6):
@@ -212,15 +225,56 @@ class Transistor_edge(SubCircuitFactory):
 
         self.alpha = 1
 
-        self.V(1, "t_G", "t_S", r"{vgs}")
+        self.V(1, "t_G", "t_S", "{vgs}")
         self.R(1, "t_D", "t_S", r_shunt)
 
         # assume models are already defined globally
         self.MOSFET(1, "t_D", "t_G", "t_S", "t_S", model="Ideal")    
     # def __repr__(self):
     #     return f"Transistor_edge({self.name}, vgs={self.V1.dc_value}, RShunt={self.R1.resistance})"
+
+class TransistorEdgeTeacher(SubCircuitFactory):
+    """Custom edge class for PySpice. Used to create a parameterized subcircuit with a
+     variable VGS parameter that can be implemented repeatedly."""
+    NAME = "transistor_edge_teacher"
+    NODES = ("t_D", "t_S", "VGS")
+
+    def __init__(self, r_shunt=1e16, epsilon=1e-6):
+        super().__init__()
+
+        self.alpha = 1
+
+        self.B(1, "t_G", "t_S", voltage_expression="V(VGS)")
+        self.R(1, "t_D", "t_S", r_shunt)
+
+        # assume models are already defined globally
+        self.MOSFET(1, "t_D", "t_G", "t_S", "t_S", model="Ideal")    
+    # def __repr__(self):
+    #     return f"Transistor_edge({self.name}, vgs={self.V1.dc_value}, RShunt={self.R1.resistance})"
+
+class Teacher(SubCircuitFactory):
+    """'Teacher' that takes in a clock, and the D, G, S nodes for two transistor edges and updates
+    VGS values according to the contrastive update rule"""
+    NAME = "teacher"
+    NODES = ("D_FREE", "S_FREE", "D_CLAMPED", "S_CLAMPED", "VGS", "CLK")
+
+    def __init__(self, c_learn=u_uF(22)):
+        # subckt will not be parameterized. All parameters are either hardcoded or defined 
+        # globally since ideally all teachers have the same parameters
+        super().__init__()
+
+        # self.B(1, 0, 1, voltage_expression="V(VGS)")
+        self.B('UPDATE', "nudge", 0, voltage_expression="V(VGS)+((V(S_FREE)-V(D_FREE))**2-(V(S_CLAMPED)-V(D_CLAMPED))**2)")
+        self.S(1, "nudge", "VGS", "CLK", 0, model="MYSW", initial_state="on")
+        self.C(1, "VGS", 0, c_learn)
+
+        # control edge VGS value
+        # self.V(1, "G_FREE", "S_FREE", "V(VGS)")
+        # self.V(2, "G_CLAMPED", "S_CLAMPED", "V(VGS)")
     
 class WrappedTransistorEdge:
+    class_subckt = TransistorEdge
+
     # TODO: if this works, fix the screwed up names of everything
     def __init__(self, edge, alpha=1):
         self.alpha = 1
@@ -231,6 +285,20 @@ class WrappedTransistorEdge:
 
     def get_val(self):
         return self.edge.parameters["vgs"]
+    
+class WrappedLinearEdge:
+    class_subckt = LinearEdge
+
+    # TODO: if this works, fix the screwed up names of everything
+    def __init__(self, edge, alpha=1):
+        self.alpha = 1
+        self.edge = edge
+
+    def update(self, delta):
+        self.edge.parameters["r"] += self.alpha * delta
+
+    def get_val(self):
+        return self.edge.parameters["r"]
 
 
 # class Scaled_Transistor_edge(SubCircuit):
@@ -301,10 +369,10 @@ class EdgeNetwork(AbstractNetwork):
         self.edges = []
 
         nodes_map = {n: i for i, n in enumerate(con_graph.nodes())}
-        edge_subckt = edge_class(epsilon=epsilon)
+        edge_subckt = edge_class.class_subckt(epsilon=epsilon)
         self.subcircuit(edge_subckt)
         for n, (u, v, r) in enumerate(con_graph.edges(data="weight")):
-            edge = WrappedTransistorEdge(self.X(n + 1, edge_subckt.name, nodes_map[u], nodes_map[v], vgs=r))
+            edge = edge_class(self.X(n + 1, edge_subckt.name, nodes_map[u], nodes_map[v], vgs=r))
             self.edges.append(edge)
 
     def update(self, updates):
@@ -313,9 +381,17 @@ class EdgeNetwork(AbstractNetwork):
 
 
 class LinearNetwork(EdgeNetwork):
-    pass
-#     def __init__(self, name: str, con_graph: nx.DiGraph, node_cfg, epsilon=1e-9):
-#         super().__init__(name, Linear_edge, con_graph, node_cfg, epsilon)
+    def __init__(
+        self, name: str, con_graph: nx.DiGraph, node_cfg, solver, epsilon=1e-9
+    ):
+        super().__init__(
+            name=name,
+            edge_class=WrappedLinearEdge,
+            con_graph=con_graph,
+            node_cfg=node_cfg,
+            solver=solver,
+            epsilon=epsilon,
+        )
 
 
 class TransistorNetwork(EdgeNetwork):
@@ -324,13 +400,15 @@ class TransistorNetwork(EdgeNetwork):
     ):
         super().__init__(
             name=name,
-            edge_class=Transistor_edge,
+            edge_class=WrappedTransistorEdge,
             con_graph=con_graph,
             node_cfg=node_cfg,
             solver=solver,
             epsilon=epsilon,
         )
         self.model("Ideal", "NMOS", level=1)
+        self.model("NMOS", "NMOS", level=1)
+        self.model("MYSW", "SW", Ron=100, Roff=1e12, Vt=0.5,)
 
 # class ScaledTransistorNetwork(EdgeNetwork):
 #     def __init__(self, name: str, con_graph: nx.DiGraph, node_cfg, epsilon=1e-9):
