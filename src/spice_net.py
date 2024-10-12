@@ -14,7 +14,7 @@ class AbstractNetwork(Circuit):
         self.name = name
         self.epsilon = epsilon
         super().__init__(name)
-        self.__nodes__ = np.array([str(i) for i in range(con_graph.number_of_nodes())])
+        self.__nodes__ = [str(i) for i in range(con_graph.number_of_nodes())]
         self.inputs = [self.B(n + 1, *inds) for n, inds in enumerate(node_cfg[0])]
         self.outputs = [
             self.B(n + 1 + len(self.inputs), *inds)
@@ -26,9 +26,9 @@ class AbstractNetwork(Circuit):
 
         # "hack" - add "index" voltage source to allow us to pass indexed lists of inputs
         self.V("index", "index", 0, 1)
-        self.cached_simulator = self.simulator(ngspice_shared=self.solver) # TODO: need to fix if allowing Xyce again
+        self.cached_simulator = self.simulator(simulator=self.solver) # TODO: need to fix if allowing Xyce again
         # self.cached_simulator = self.simulator(simulator='ngspice-subprocess')
-        self.cached_simulator.options("KLU")
+        # self.cached_simulator.options("KLU")
 
     def _prepare_simulation(self, inputs, outputs=None):
         """Solves for all node voltages given differential input voltages
@@ -272,6 +272,20 @@ class Teacher(SubCircuitFactory):
         # self.V(1, "G_FREE", "S_FREE", "V(VGS)")
         # self.V(2, "G_CLAMPED", "S_CLAMPED", "V(VGS)")
     
+class WrappedTeacherEdge:
+    class_subckt = TransistorEdgeTeacher
+
+    # TODO: if this works, fix the screwed up names of everything
+    def __init__(self, edge, alpha=1):
+        self.alpha = 1
+        self.edge = edge
+
+    def update(self, delta):
+        raise NotImplementedError("Teacher edge should not be updated manually!")
+
+    def get_val(self):
+        raise NotImplementedError("Teacher edge VGS must be read from simulation results!")
+    
 class WrappedTransistorEdge:
     class_subckt = TransistorEdge
 
@@ -395,22 +409,6 @@ class LinearNetwork(EdgeNetwork):
 
 
 class TransistorNetwork(EdgeNetwork):
-    def __init__(
-        self, name: str, con_graph: nx.DiGraph, node_cfg, solver, epsilon=1e-9
-    ):
-        super().__init__(
-            name=name,
-            edge_class=WrappedTransistorEdge,
-            con_graph=con_graph,
-            node_cfg=node_cfg,
-            solver=solver,
-            epsilon=epsilon,
-        )
-        self.model("Ideal", "NMOS", level=1)
-        self.model("NMOS", "NMOS", level=1)
-        self.model("MYSW", "SW", Ron=100, Roff=1e12, Vt=0.5,)
-
-class TwinEdgeNetwork(EdgeNetwork):
     def __init__(
         self, name: str, con_graph: nx.DiGraph, node_cfg, solver, epsilon=1e-9
     ):
