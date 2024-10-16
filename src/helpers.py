@@ -45,7 +45,7 @@ def step_network(net: AbstractNetwork, x, y, e1, e2, gamma = 10, eta = 0.1, l = 
     for k, v in enumerate(net.outputs):
         a, b = v.node_names
         a, b = int(a), int(b)
-        preds[k] = u_V(free[a] - free[b,:])
+        preds[k] = u_V(free[a] - free[b])
     nudges = eta * y + (1-eta) * preds
 
     clamped = net.solve(x, nudges.reshape(y.shape))

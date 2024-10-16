@@ -27,8 +27,6 @@ class AbstractNetwork(Circuit):
         # "hack" - add "index" voltage source to allow us to pass indexed lists of inputs
         self.V("index", "index", 0, 1)
         self.cached_simulator = self.simulator(simulator=self.solver) # TODO: need to fix if allowing Xyce again
-        # self.cached_simulator = self.simulator(simulator='ngspice-subprocess')
-        # self.cached_simulator.options("KLU")
 
     def _prepare_simulation(self, inputs, outputs=None):
         """Solves for all node voltages given differential input voltages
@@ -156,51 +154,6 @@ class AbstractNetwork(Circuit):
 
         return out.T
 
-    # def copy(self, name):
-    #     copy = LinearNetwork(name, nx.Graph(), [[], []], self.epsilon)
-    #     copy.__nodes__ = self.__nodes__.copy()
-
-    #     copy.inputs = []
-    #     for n, B in enumerate(self.inputs):
-    #         inds = B.node_names
-    #         copy.inputs.append(copy.B(n + 1, *inds))
-
-    #     copy.outputs = []
-    #     for n, B in enumerate(self.outputs):
-    #         inds = B.node_names
-    #         copy.outputs.append(copy.B(n + 1 + len(self.inputs), *inds))
-
-    #     copy.edges = []
-    #     for n, R in enumerate(self.edges):
-    #         inds = R.node_names
-    #         r = R.resistance
-    #         copy.edges.append(copy.R(n + 1, *inds, r))
-
-    #     return copy
-
-
-# class Linear_edge(SubCircuit):
-#     """Linear resistive edge parameterized by conductance"""
-#     # TODO: there's really no reason to keep the code like this, 
-#     # it's inefficient vs. just wrapping the returned component
-
-#     __nodes__ = ("t_D", "t_S")
-
-#     def __init__(self, name, circ, r_init, epsilon=1e-6):
-
-#         SubCircuit.__init__(self, name, *self.__nodes__)
-
-#         self.R(1, "t_D", "t_S", 1.0 / r_init)
-#         self.epsilon = epsilon
-
-#     def update(self, delta):
-#         self.R1.resistance = 1.0 / max(1.0 / self.R1.resistance + delta, self.epsilon)
-
-#     def get_val(self):
-#         """Returns edge conductance"""
-#         return 1.0 / self.R1.resistance
-
-
 class LinearEdge(SubCircuitFactory):
     """Custom edge class for PySpice. Used to create a parameterized subcircuit with a
      variable R parameter that can be implemented repeatedly."""
@@ -263,8 +216,9 @@ class Teacher(SubCircuitFactory):
         # globally since ideally all teachers have the same parameters
         super().__init__()
 
-        # self.B(1, 0, 1, voltage_expression="V(VGS)")
-        self.B('UPDATE', "nudge", 0, voltage_expression="V(VGS)+((V(S_FREE)-V(D_FREE))**2-(V(S_CLAMPED)-V(D_CLAMPED))**2)")
+        # self.B('UPDATE', "nudge", 0, voltage_expression="V(VGS)+((V(S_FREE)-V(D_FREE))**2-(V(S_CLAMPED)-V(D_CLAMPED))**2)")
+        # replace 
+        self.B('UPDATE', "nudge", 0, current_expression=f"((V(S_FREE)-V(D_FREE))**2-(V(S_CLAMPED)-V(D_CLAMPED))**2)")
         self.S(1, "nudge", "VGS", "CLK", 0, model="MYSW", initial_state="on")
         self.C(1, "VGS", 0, c_learn)
 
@@ -313,53 +267,6 @@ class WrappedLinearEdge:
 
     def get_val(self):
         return self.edge.parameters["r"]
-
-
-# class Scaled_Transistor_edge(SubCircuit):
-#     __nodes__ = ("t_D", "t_S")
-
-#     def __init__(self, name, circ, v_gs, r_shunt=0, epsilon=1e-6):
-
-#         SubCircuit.__init__(self, name, *self.__nodes__)
-#         # constant of porportionality represenitng slope of I-V curve
-#         # intended to make transistor network update match linear network update
-#         self.alpha = 1.0 / 1.7716667740993823e-05
-
-#         self.V(1, "t_G", "t_S", self.alpha * v_gs)
-
-#         self.R(1, "t_D", "dummy", r_shunt)
-#         self.MOSFET(1, "dummy", "t_G", "t_S", "t_S", model="Ideal")
-
-#         self.model("Ideal", "NMOS", level=1)
-
-#     def update(self, delta):
-#         self.V1.dc_value += self.alpha * delta
-
-#     def get_val(self):
-#         return self.V1.dc_value
-
-
-# class Ground_reference_edge(SubCircuit):
-#     __nodes__ = ("t_D", "t_S", "gnd")
-
-#     def __init__(self, name, circ, v_gs, r_shunt=1e16, epsilon=1e-6):
-
-#         SubCircuit.__init__(self, name, *self.__nodes__)
-#         self.alpha = 1
-
-#         self.V(1, "t_G", "gnd", self.alpha * v_gs)
-
-#         self.R(1, "t_D", "t_S", r_shunt)
-#         self.MOSFET(1, "t_D", "t_G", "t_S", "t_S", model="Ideal")
-
-#         self.model("Ideal", "NMOS", level=1)
-
-#     def update(self, delta):
-#         self.V1.dc_value += self.alpha * delta
-
-#     def get_val(self):
-#         return self.V1.dc_value
-
 
 class EdgeNetwork(AbstractNetwork):
     def __init__(
@@ -422,26 +329,97 @@ class TransistorNetwork(EdgeNetwork):
         )
         self.model("Ideal", "NMOS", level=1)
         self.model("NMOS", "NMOS", level=1)
-        self.model("MYSW", "SW", Ron=100, Roff=1e12, Vt=0.5,)
+        self.model("MYSW", "SW", Ron=100, Roff=u_mOhm(1), Vt=0.5,)
 
-# class ScaledTransistorNetwork(EdgeNetwork):
-#     def __init__(self, name: str, con_graph: nx.DiGraph, node_cfg, epsilon=1e-9):
-#         super().__init__(name, Scaled_Transistor_edge, con_graph, node_cfg, epsilon)
+class TwinNetwork(AbstractNetwork):
+    def __init__(self, name: str, con_graph: nx.Graph, node_cfg, solver, R_ON=u_Ohm(100), C_LEARN=u_uF(22), t_h=u_us(100), period=u_us(200)):
+        assert t_h < period, "Pulse width must be less than period"
 
+        # duplicate graph but preserve ground node
+        cg_copy = con_graph.copy()
+        cg_copy = nx.relabel_nodes(cg_copy, {x: x + con_graph.number_of_nodes() for x in cg_copy.nodes})
+        cg_combined = nx.compose(con_graph, cg_copy)
 
-# class GroundReferenceNetwork(AbstractNetwork):
-#     def __init__(self, name: str, con_graph: nx.DiGraph, node_cfg, epsilon=1e-9):
-#         super().__init__(name, con_graph, node_cfg, epsilon)
+        cg_combined = nx.contracted_nodes(cg_combined, 0, con_graph.number_of_nodes())
 
-#         self.edges = []
+        # let the original graph be the clamped network and the copy be the free network
+        # need to copy inputs to the free network, but outputs stay only in the clamped network
+        free_net_offset = lambda x: x + con_graph.number_of_nodes() * (x != 0)
 
-#         nodes_map = {n: i for i, n in enumerate(con_graph.nodes())}
-#         for n, (u, v, r) in enumerate(con_graph.edges(data="weight")):
-#             edge = Ground_reference_edge(f"e{n+1}", self, r, epsilon=epsilon)
-#             self.subcircuit(edge)
-#             self.edges.append(edge)
-#             edge.circ = self.X(n + 1, f"e{n+1}", nodes_map[u], nodes_map[v], 0)
+        inputs, outputs = node_cfg
+        inputs_free = free_net_offset(inputs)
+        inputs = np.concatenate([inputs, inputs_free])
 
-#     def update(self, updates):
-#         for edge, delta in zip(self.edges, updates):
-#             edge.update(delta)
+        self.outputs_free = [[str(node) for node in of] for of in free_net_offset(outputs)] # for evaluation purposes only
+
+        node_cfg = (inputs, outputs)
+
+        # Set up nodes and underlying methods
+        super().__init__(name, cg_combined, node_cfg, solver)
+        
+
+        # add edges and teachers
+        self.model('nmos', 'nmos', level=1)
+        self.model('Ideal', 'nmos', level=1)
+        self.model("MYSW", "SW", Ron=R_ON, Roff=u_mOhm(1), Vt=0.5,)
+
+        self.free_edges = []
+        self.clamped_edges = []
+        self.teachers = []
+
+        self.subcircuit(TransistorEdgeTeacher(r_shunt=1))
+        self.subcircuit(Teacher(c_learn=C_LEARN))
+        nodes_map = {n: i for i, n in enumerate(cg_combined.nodes())} # shared ground, all other nodes duplicated
+
+        for n, (u, v, r) in enumerate(con_graph.edges(data="weight")):
+            aux_node = "VGS" + str(n)
+            self.__nodes__.append(aux_node)
+            clamped_edge = self.X(f"C{n + 1}", TransistorEdgeTeacher.NAME, nodes_map[u], nodes_map[v], aux_node)
+            free_edge = self.X(f"F{n + 1}", TransistorEdgeTeacher.NAME, free_net_offset(nodes_map[u]), free_net_offset(nodes_map[v]), aux_node)
+            teacher = self.X(f"T{n+1}", Teacher.NAME, free_net_offset(nodes_map[u]), free_net_offset(nodes_map[v]), nodes_map[u], nodes_map[v], aux_node, "CLK")
+
+            self.cached_simulator.initial_condition(**{aux_node: r})
+
+            self.clamped_edges.append(clamped_edge)
+            self.free_edges.append(free_edge)
+            self.teachers.append(teacher)
+
+        self.edges = self.clamped_edges + self.free_edges
+
+        # add clock
+        self.t_h = t_h
+        self.period = period
+        self.PulseVoltageSource("VCLK", "CLK", 0, initial_value=0, pulsed_value=1, pulse_width=self.t_h, period=self.t_h + self.period)
+
+        # add support for random indexing
+        self.RandomVoltageSource("rand", "rand", 0, "uniform", self.period, 0, 0.5, 0.5)
+        self.B("index", "index", 0)
+
+    def _prepare_simulation(self, inputs, outputs, nudge_factor):
+        inputs = np.hstack([inputs, inputs])
+
+        super()._prepare_simulation(inputs, outputs)
+
+        # make clamps use nudge factor
+        for of, oc in zip(self.outputs_free, self.outputs):
+            a, b = of
+            if (nudge_factor > 0) and (nudge_factor < 1):
+                oc.voltage_expression = f"{1-nudge_factor} * (V({a}) - V({b})) + {nudge_factor}*" + oc.voltage_expression
+            elif nudge_factor == 0:
+                oc.voltage_expression = f"V({a}) - V({b})"
+            elif nudge_factor == 1:
+                pass
+            else:
+                raise ValueError("Nudge factor must be between 0 and 1 (inclusive)")
+
+        # experiment with random indexing
+        self.Vindex.enabled = False
+        self.Bindex.enabled = True
+        self.Bindex.voltage_expression = f"1 + FLOOR(V(rand)*{self.n_examples})"
+
+    def _run_simulation(self):
+        raise NotImplementedError("User should call call transient simulation themselves")
+    def solve(self, inputs, outputs=None):
+        raise NotImplementedError("User should call call transient simulation themselves")
+    def predict(self, inputs):
+        raise NotImplementedError("User should call call transient simulation themselves")
