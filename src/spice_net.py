@@ -216,9 +216,9 @@ class Teacher(SubCircuitFactory):
         # globally since ideally all teachers have the same parameters
         super().__init__()
 
-        # self.B('UPDATE', "nudge", 0, voltage_expression="V(VGS)+((V(S_FREE)-V(D_FREE))**2-(V(S_CLAMPED)-V(D_CLAMPED))**2)")
-        # replace 
-        self.B('UPDATE', "nudge", 0, current_expression=f"((V(S_FREE)-V(D_FREE))**2-(V(S_CLAMPED)-V(D_CLAMPED))**2)")
+        self.B('UPDATE', "nudge", 0, voltage_expression="V(VGS)+((V(S_FREE)-V(D_FREE))**2-(V(S_CLAMPED)-V(D_CLAMPED))**2)")
+        # replace voltage source with current source to replicate paper
+        # self.B('UPDATE', "nudge", 0, current_expression=f"((V(S_FREE)-V(D_FREE))**2-(V(S_CLAMPED)-V(D_CLAMPED))**2)")
         self.S(1, "nudge", "VGS", "CLK", 0, model="MYSW", initial_state="on")
         self.C(1, "VGS", 0, c_learn)
 
