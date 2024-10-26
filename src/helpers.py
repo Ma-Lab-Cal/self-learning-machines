@@ -45,7 +45,7 @@ def step_network(net: AbstractNetwork, x, y, e1, e2, gamma = 10, eta = 0.1, l = 
     for k, v in enumerate(net.outputs):
         a, b = v.node_names
         a, b = int(a), int(b)
-        preds[k] = u_V(free[a] - free[b])
+        preds[k] = float(free[a] - free[b])
     nudges = eta * y + (1-eta) * preds
 
     clamped = net.solve(x, nudges.reshape(y.shape))
@@ -159,7 +159,7 @@ def visualize(net: Union[LinearNetwork, TransistorNetwork], pos=None):
 
     edge_types = {}
     for E in net.edges:
-        a, b = list(map(int, E.circ.node_names[:2]))
+        a, b = list(map(int, E.edge.node_names[:2]))
         edge_types[type(E)] = str(type(E))
         G.add_edge(a, b, weight=E.get_val(), type=str(type(E)))
 
@@ -195,7 +195,7 @@ def visualize(net: Union[LinearNetwork, TransistorNetwork], pos=None):
         weights = list(nx.get_edge_attributes(filter_edges(edge_type), 'weight').values())
         nx.draw_networkx_edges(G, pos=pos, edgelist=filter_edges(edge_type).edges, label=edge_type, width=weights)
 
-    nx.draw_networkx_edge_labels(G, pos=pos, edge_labels={tuple(map(int, E.circ.node_names[:2])): f'{E.get_val():.2f}' for E in net.edges}, rotate=False)
+    nx.draw_networkx_edge_labels(G, pos=pos, edge_labels={tuple(map(int, E.edge.node_names[:2])): f'{E.get_val():.2f}' for E in net.edges}, rotate=False)
     plt.legend()
     plt.title(f'Network: {net.name}')
 

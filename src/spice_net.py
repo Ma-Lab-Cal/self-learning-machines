@@ -26,7 +26,9 @@ class AbstractNetwork(Circuit):
 
         # "hack" - add "index" voltage source to allow us to pass indexed lists of inputs
         self.V("index", "index", 0, 1)
-        self.cached_simulator = self.simulator(simulator=self.solver) # TODO: need to fix if allowing Xyce again
+        self.cached_simulator = self.simulator(
+            simulator=self.solver
+        )  # TODO: need to fix if allowing Xyce again
 
     def _prepare_simulation(self, inputs, outputs=None):
         """Solves for all node voltages given differential input voltages
@@ -123,7 +125,6 @@ class AbstractNetwork(Circuit):
 
         # init_conds = {}
         # for node in self.__nodes__:
-            
 
         result = self._run_simulation()
 
@@ -145,18 +146,21 @@ class AbstractNetwork(Circuit):
     def predict(self, inputs):
         self._prepare_simulation(inputs)
         result = self._run_simulation()
-        n_examples = len(result.nodes[str(self.__nodes__[0])])
+        n_examples = len(result.nodes[str(self.__nodes__[1])])
         out = np.zeros((len(self.outputs), n_examples))
 
+        result.nodes[str(self.__nodes__[0])] = result.nodes[str(self.__nodes__[1])] * 0
         for i, v in enumerate(self.outputs):
             a, b = v.node_names
             out[i] = u_V(result.nodes[a] - result.nodes[b])
 
         return out.T
 
+
 class LinearEdge(SubCircuitFactory):
     """Custom edge class for PySpice. Used to create a parameterized subcircuit with a
-     variable R parameter that can be implemented repeatedly."""
+    variable R parameter that can be implemented repeatedly."""
+
     NAME = "linear_edge"
     NODES = ("t_D", "t_S")
 
@@ -165,11 +169,27 @@ class LinearEdge(SubCircuitFactory):
 
         self.alpha = 1
 
-        self.R(1, "t_D", "t_S", r"{r}")  
+        self.R(1, "t_D", "t_S", r"{r}")
+
+
+class TransistorEdgeGroundref(SubCircuitFactory):
+    NAME = "transistor_edge_groundref"
+    NODES = ("t_D", "t_S")
+
+    def __init__(self, vg=2.5, r_shunt=1e16, epsilon=1e-6):
+        super().__init__(vg=vg)
+
+        self.V(1, "t_G", "t_S", "{vg}")
+
+        # assume models are already defined globally
+        # self.MOSFET(1, "t_D", "t_G", "t_S", 0, model="Ideal")
+        self.X(1, "1106", "t_D", "t_G", "t_S", 0, 0)
+
 
 class TransistorEdge(SubCircuitFactory):
     """Custom edge class for PySpice. Used to create a parameterized subcircuit with a
-     variable VGS parameter that can be implemented repeatedly."""
+    variable VGS parameter that can be implemented repeatedly."""
+
     NAME = "transistor_edge"
     NODES = ("t_D", "t_S")
 
@@ -182,13 +202,16 @@ class TransistorEdge(SubCircuitFactory):
         self.R(1, "t_D", "t_S", r_shunt)
 
         # assume models are already defined globally
-        self.MOSFET(1, "t_D", "t_G", "t_S", "t_S", model="Ideal")    
+        self.MOSFET(1, "t_D", "t_G", "t_S", "t_S", model="Ideal")
+
     # def __repr__(self):
     #     return f"Transistor_edge({self.name}, vgs={self.V1.dc_value}, RShunt={self.R1.resistance})"
 
+
 class TransistorEdgeTeacher(SubCircuitFactory):
     """Custom edge class for PySpice. Used to create a parameterized subcircuit with a
-     variable VGS parameter that can be implemented repeatedly."""
+    variable VGS parameter that can be implemented repeatedly."""
+
     NAME = "transistor_edge_teacher"
     NODES = ("t_D", "t_S", "VGS")
 
@@ -201,31 +224,41 @@ class TransistorEdgeTeacher(SubCircuitFactory):
         self.R(1, "t_D", "t_S", r_shunt)
 
         # assume models are already defined globally
-        self.MOSFET(1, "t_D", "t_G", "t_S", "t_S", model="Ideal")    
+        self.MOSFET(1, "t_D", "t_G", "t_S", "t_S", model="Ideal")
+
     # def __repr__(self):
     #     return f"Transistor_edge({self.name}, vgs={self.V1.dc_value}, RShunt={self.R1.resistance})"
+
 
 class Teacher(SubCircuitFactory):
     """'Teacher' that takes in a clock, and the D, G, S nodes for two transistor edges and updates
     VGS values according to the contrastive update rule"""
+
     NAME = "teacher"
+    # NODES = ("D_FREE", "S_FREE", "D_CLAMPED", "S_CLAMPED", "VGS") # can we make a more compact representation by using global clock?
     NODES = ("D_FREE", "S_FREE", "D_CLAMPED", "S_CLAMPED", "VGS", "CLK")
 
-    def __init__(self, c_learn=u_uF(22)):
-        # subckt will not be parameterized. All parameters are either hardcoded or defined 
+    def __init__(self, r_learn=u_Ohm(100), c_learn=u_uF(22)):
+        # subckt will not be parameterized. All parameters are either hardcoded or defined
         # globally since ideally all teachers have the same parameters
         super().__init__()
 
-        self.B('UPDATE', "nudge", 0, voltage_expression="V(VGS)+((V(S_FREE)-V(D_FREE))**2-(V(S_CLAMPED)-V(D_CLAMPED))**2)")
-        # replace voltage source with current source to replicate paper
-        # self.B('UPDATE', "nudge", 0, current_expression=f"((V(S_FREE)-V(D_FREE))**2-(V(S_CLAMPED)-V(D_CLAMPED))**2)")
-        self.S(1, "nudge", "VGS", "CLK", 0, model="MYSW", initial_state="on")
+        # self.B('UPDATE', 0, "VGS", current_expression=f"0.1*V(CLK)") # fix updates for refinement study
+        self.B(
+            "UPDATE",
+            0,
+            "VGS",
+            current_expression=f"((V(S_FREE)-V(D_FREE))**2-(V(S_CLAMPED)-V(D_CLAMPED))**2)*V(CLK)",
+        )
+        # self.S(1, "nudge", "VGS", "CLK", 0, model="MYSW", initial_state="on")
+        # self.R(1, "nudge", "VGS", r_learn)
         self.C(1, "VGS", 0, c_learn)
 
         # control edge VGS value
         # self.V(1, "G_FREE", "S_FREE", "V(VGS)")
         # self.V(2, "G_CLAMPED", "S_CLAMPED", "V(VGS)")
-    
+
+
 class WrappedTeacherEdge:
     class_subckt = TransistorEdgeTeacher
 
@@ -238,8 +271,26 @@ class WrappedTeacherEdge:
         raise NotImplementedError("Teacher edge should not be updated manually!")
 
     def get_val(self):
-        raise NotImplementedError("Teacher edge VGS must be read from simulation results!")
-    
+        raise NotImplementedError(
+            "Teacher edge VGS must be read from simulation results!"
+        )
+
+
+class WrappedTransistorEdgeGroundref:
+    class_subckt = TransistorEdgeGroundref
+
+    # TODO: if this works, fix the screwed up names of everything
+    def __init__(self, edge, alpha=1):
+        self.alpha = 1
+        self.edge = edge
+
+    def update(self, delta):
+        self.edge.parameters["vg"] += self.alpha * delta
+
+    def get_val(self):
+        return self.edge.parameters["vg"]
+
+
 class WrappedTransistorEdge:
     class_subckt = TransistorEdge
 
@@ -253,7 +304,8 @@ class WrappedTransistorEdge:
 
     def get_val(self):
         return self.edge.parameters["vgs"]
-    
+
+
 class WrappedLinearEdge:
     class_subckt = LinearEdge
 
@@ -267,6 +319,7 @@ class WrappedLinearEdge:
 
     def get_val(self):
         return self.edge.parameters["r"]
+
 
 class EdgeNetwork(AbstractNetwork):
     def __init__(
@@ -293,7 +346,9 @@ class EdgeNetwork(AbstractNetwork):
         edge_subckt = edge_class.class_subckt(epsilon=epsilon)
         self.subcircuit(edge_subckt)
         for n, (u, v, r) in enumerate(con_graph.edges(data="weight")):
-            edge = edge_class(self.X(n + 1, edge_subckt.name, nodes_map[u], nodes_map[v], vgs=r))
+            edge = edge_class(
+                self.X(n + 1, edge_subckt.name, nodes_map[u], nodes_map[v], vg=r) # TODO: modularize and allow for cg AND vgs?
+            )
             self.edges.append(edge)
 
     def update(self, updates):
@@ -329,15 +384,44 @@ class TransistorNetwork(EdgeNetwork):
         )
         self.model("Ideal", "NMOS", level=1)
         self.model("NMOS", "NMOS", level=1)
-        self.model("MYSW", "SW", Ron=100, Roff=u_mOhm(1), Vt=0.5,)
+        # self.model("MYSW", "SW", Ron=100, Roff=u_mOhm(1), Vt=0.5,)
+
+
+class TransistorNetworkGroundref(EdgeNetwork):
+    def __init__(
+        self, name: str, con_graph: nx.DiGraph, node_cfg, solver, epsilon=1e-9
+    ):
+        super().__init__(
+            name=name,
+            edge_class=WrappedTransistorEdgeGroundref,
+            con_graph=con_graph,
+            node_cfg=node_cfg,
+            solver=solver,
+            epsilon=epsilon,
+        )
+        # self.model("Ideal", "NMOS", level=1)
+        self.include("my_lib.lib")
+
 
 class TwinNetwork(AbstractNetwork):
-    def __init__(self, name: str, con_graph: nx.Graph, node_cfg, solver, R_ON=u_Ohm(100), C_LEARN=u_uF(22), t_h=u_us(100), period=u_us(200)):
+    def __init__(
+        self,
+        name: str,
+        con_graph: nx.Graph,
+        node_cfg,
+        solver,
+        R_ON=u_Ohm(100),
+        C_LEARN=u_uF(22),
+        t_h=u_us(100),
+        period=u_us(200),
+    ):
         assert t_h < period, "Pulse width must be less than period"
 
         # duplicate graph but preserve ground node
         cg_copy = con_graph.copy()
-        cg_copy = nx.relabel_nodes(cg_copy, {x: x + con_graph.number_of_nodes() for x in cg_copy.nodes})
+        cg_copy = nx.relabel_nodes(
+            cg_copy, {x: x + con_graph.number_of_nodes() for x in cg_copy.nodes}
+        )
         cg_combined = nx.compose(con_graph, cg_copy)
 
         cg_combined = nx.contracted_nodes(cg_combined, 0, con_graph.number_of_nodes())
@@ -350,33 +434,57 @@ class TwinNetwork(AbstractNetwork):
         inputs_free = free_net_offset(inputs)
         inputs = np.concatenate([inputs, inputs_free])
 
-        self.outputs_free = [[str(node) for node in of] for of in free_net_offset(outputs)] # for evaluation purposes only
+        self.outputs_free = [
+            [str(node) for node in of] for of in free_net_offset(outputs)
+        ]  # for evaluation purposes only
 
         node_cfg = (inputs, outputs)
 
         # Set up nodes and underlying methods
         super().__init__(name, cg_combined, node_cfg, solver)
-        
 
         # add edges and teachers
-        self.model('nmos', 'nmos', level=1)
-        self.model('Ideal', 'nmos', level=1)
-        self.model("MYSW", "SW", Ron=R_ON, Roff=u_mOhm(1), Vt=0.5,)
+        self.model("nmos", "nmos", level=1)
+        self.model("Ideal", "nmos", level=1)
+        # self.model("MYSW", "SW", Ron=R_ON, Roff=u_mOhm(1), Vt=0.5,)
 
         self.free_edges = []
         self.clamped_edges = []
         self.teachers = []
 
         self.subcircuit(TransistorEdgeTeacher(r_shunt=1))
-        self.subcircuit(Teacher(c_learn=C_LEARN))
-        nodes_map = {n: i for i, n in enumerate(cg_combined.nodes())} # shared ground, all other nodes duplicated
+        self.subcircuit(Teacher(r_learn=R_ON, c_learn=C_LEARN))
+        nodes_map = {
+            n: i for i, n in enumerate(cg_combined.nodes())
+        }  # shared ground, all other nodes duplicated
 
         for n, (u, v, r) in enumerate(con_graph.edges(data="weight")):
             aux_node = "VGS" + str(n)
             self.__nodes__.append(aux_node)
-            clamped_edge = self.X(f"C{n + 1}", TransistorEdgeTeacher.NAME, nodes_map[u], nodes_map[v], aux_node)
-            free_edge = self.X(f"F{n + 1}", TransistorEdgeTeacher.NAME, free_net_offset(nodes_map[u]), free_net_offset(nodes_map[v]), aux_node)
-            teacher = self.X(f"T{n+1}", Teacher.NAME, free_net_offset(nodes_map[u]), free_net_offset(nodes_map[v]), nodes_map[u], nodes_map[v], aux_node, "CLK")
+            clamped_edge = self.X(
+                f"C{n + 1}",
+                TransistorEdgeTeacher.NAME,
+                nodes_map[u],
+                nodes_map[v],
+                aux_node,
+            )
+            free_edge = self.X(
+                f"F{n + 1}",
+                TransistorEdgeTeacher.NAME,
+                free_net_offset(nodes_map[u]),
+                free_net_offset(nodes_map[v]),
+                aux_node,
+            )
+            teacher = self.X(
+                f"T{n+1}",
+                Teacher.NAME,
+                free_net_offset(nodes_map[u]),
+                free_net_offset(nodes_map[v]),
+                nodes_map[u],
+                nodes_map[v],
+                aux_node,
+                "CLK",
+            )
 
             self.cached_simulator.initial_condition(**{aux_node: r})
 
@@ -389,11 +497,26 @@ class TwinNetwork(AbstractNetwork):
         # add clock
         self.t_h = t_h
         self.period = period
-        self.PulseVoltageSource("VCLK", "CLK", 0, initial_value=0, pulsed_value=1, pulse_width=self.t_h, period=self.t_h + self.period)
+        self.PulseVoltageSource(
+            "VCLK",
+            "CLK",
+            0,
+            initial_value=0,
+            pulsed_value=1,
+            pulse_width=self.t_h,
+            period=self.t_h + self.period,
+            rise_time=self.t_h / 10,
+            fall_time=self.t_h / 10,
+        )
 
         # add support for random indexing
         self.RandomVoltageSource("rand", "rand", 0, "uniform", self.period, 0, 0.5, 0.5)
         self.B("index", "index", 0)
+
+        # prevent floating nodes
+        self.R("CLK", "CLK", 0, u_mOhm(1))
+        self.R("rand", "rand", 0, u_mOhm(1))
+        self.R("index", "index", 0, u_mOhm(1))
 
     def _prepare_simulation(self, inputs, outputs, nudge_factor):
         inputs = np.hstack([inputs, inputs])
@@ -404,7 +527,10 @@ class TwinNetwork(AbstractNetwork):
         for of, oc in zip(self.outputs_free, self.outputs):
             a, b = of
             if (nudge_factor > 0) and (nudge_factor < 1):
-                oc.voltage_expression = f"{1-nudge_factor} * (V({a}) - V({b})) + {nudge_factor}*" + oc.voltage_expression
+                oc.voltage_expression = (
+                    f"{1-nudge_factor} * (V({a}) - V({b})) + {nudge_factor}*"
+                    + oc.voltage_expression
+                )
             elif nudge_factor == 0:
                 oc.voltage_expression = f"V({a}) - V({b})"
             elif nudge_factor == 1:
@@ -418,8 +544,18 @@ class TwinNetwork(AbstractNetwork):
         self.Bindex.voltage_expression = f"1 + FLOOR(V(rand)*{self.n_examples})"
 
     def _run_simulation(self):
-        raise NotImplementedError("User should call call transient simulation themselves")
+        raise NotImplementedError(
+            "User should call call transient simulation themselves"
+        )
+
     def solve(self, inputs, outputs=None):
-        raise NotImplementedError("User should call call transient simulation themselves")
+        raise NotImplementedError(
+            "User should call call transient simulation themselves"
+        )
+
     def predict(self, inputs):
-        raise NotImplementedError("User should call call transient simulation themselves")
+        raise NotImplementedError(
+            "User should call call transient simulation themselves"
+        )
+
+
