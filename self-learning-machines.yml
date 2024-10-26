@@ -10,8 +10,6 @@ dependencies:
   - pip
   - jupyter
   - pyspice
-  - ngspice=32
-  - ngspice-lib=32
   - pip:
       - ltspice
       - tqdm
