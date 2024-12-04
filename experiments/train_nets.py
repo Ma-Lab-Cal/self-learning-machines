@@ -33,7 +33,29 @@ parser.add_argument('--dataset', type=str, default=None, help='Number of checkpo
 parser.add_argument('--seed', type=int, default=0, help='Random seed used for initialization (default: 0)')
 
 # XOR task
-def init_model_xor(name, cls, seed, solver, eta=0.5):
+def init_model_xor(name, cls, seed, eta=0.5):
+    np.random.seed(seed)
+
+    grid_size = 4
+
+    grid_graph = nx.grid_graph([grid_size, grid_size], periodic=True)
+    # relabel nodes to be ints
+    grid_graph = nx.convert_node_labels_to_integers(grid_graph, first_label=1, ordering='sorted')
+    grid_graph.add_node(0)
+
+    # grid_graph.add_node((-1, -1))
+
+    for e in grid_graph.edges:
+        # grid_graph[e[0]][e[1]]['weight'] = 0.5                           # init to max value
+        grid_graph[e[0]][e[1]]['weight'] = np.random.uniform(0.0, 5.)       # random value
+
+    node_cfg = (np.array([[6, 0], [8, 0], [16, 0], [14, 0]]), np.array([[11, 1]]))
+
+    return cls(name, con_graph=grid_graph, node_cfg=node_cfg, solver='ngspice-subprocess', epsilon=1e-16)
+    # TODO: look for checkpoints and load them if found
+
+# XOR task
+def init_model_xor_old(name, cls, seed, eta=0.5):
     np.random.seed(seed)
 
     grid_graph = nx.grid_graph([4, 4], periodic=True)
@@ -43,23 +65,10 @@ def init_model_xor(name, cls, seed, solver, eta=0.5):
         grid_graph[e[0]][e[1]]["weight"] = np.random.uniform(0, 1)  # random init
         # grid_graph[e[0]][e[1]]['weight'] = 5                           # init to max value
 
-    node_cfg = (np.array([[5, 16], [7, 16], [13, 16], [15, 16]]), np.array([[10, 0]]))
-    return cls(name, con_graph=grid_graph, node_cfg=node_cfg, solver=solver, epsilon=1e-16)
-    # TODO: look for checkpoints and load them if found
-
-# XOR task
-def init_model_xor_old(name, cls, eta=0.5):
-    np.random.seed(args.seed)
-
-    grid_graph = nx.grid_graph([4, 4], periodic=True)
-    grid_graph.add_node((-1, -1))
-
-    for e in grid_graph.edges:
-        grid_graph[e[0]][e[1]]["weight"] = np.random.uniform(0, 1)  # random init
-        # grid_graph[e[0]][e[1]]['weight'] = 5                           # init to max value
-
-    node_cfg = (np.array([[5, 16], [7, 16], [13, 16], [15, 16]]), np.array([[10, 0]]))
-    return cls(name, con_graph=grid_graph, node_cfg=node_cfg, solver='ngspice_subprocess', epsilon=1e-16)
+    grid_graph = nx.convert_node_labels_to_integers(grid_graph, first_label=0, ordering="default")
+    node_cfg = (np.array([[5, 16], [7, 16], [13, 16], [15, 16]]), np.array([[10, 0]])) 
+    # node_cfg = (np.array([[5, 16], [7, 16], [13, 16], [15, 16]]), np.array([[10, 0]])) # TODO: old line, need to rename nodes?
+    return cls(name, con_graph=grid_graph, node_cfg=node_cfg, solver='ngspice-subprocess', epsilon=1e-16)
 
 # Nonlinear task
 def init_model_nonlinear(name, cls, seed):
@@ -89,7 +98,7 @@ if __name__ == "__main__":
         train_inputs = data["inputs"]
         train_outputs = data["outputs"]
     else:
-        if args.task_name == "xor":
+        if (args.task_name == "xor") or (args.task_name == "xor-old"):
             xor_data = np.load(path.join(DATA_DIR, "xor_train_data.npz"))
             train_inputs = xor_data["inputs"]
             train_outputs = xor_data["outputs"]
@@ -102,18 +111,20 @@ if __name__ == "__main__":
 
     # Initialize model
     try:
-        network_type = {"ground_reference": GroundReferenceNetwork, "source_reference": TransistorNetwork}[args.model_type]
+        network_type = {"ground_reference": TransistorNetworkGroundref, "source_reference": TransistorNetwork}[args.model_type]
     except KeyError:
         raise ValueError(f"Unknown model type: {args.model_type}")
 
     if args.task_name == "xor":
         model = init_model_xor(args.name, network_type, args.seed)
+    elif args.task_name == "xor-old":
+        model = init_model_xor_old(args.name, network_type, args.seed)
     elif args.task_name == "regression":
         model = init_model_nonlinear(args.name, network_type, args.seed)
 
     e1, e2 = [], []
     for E in model.edges:
-        a, b = list(map(int, E.circ.node_names[:2]))
+        a, b = list(map(int, E.edge.node_names[:2]))
         e1.append(a)
         e2.append(b)
 

@@ -58,9 +58,10 @@ def step_network(net: AbstractNetwork, x, y, e1, e2, gamma = 10, eta = 0.1, l = 
 
     update = -gamma * (delta_clamped**2 - delta_free**2)
 
-    trainable_updates = update[e1, e2]
+    trainable_updates = update[e1, e2] 
 
-    net.update(trainable_updates)
+    # FIXME: hack to allow batched/other updates
+    # net.update(trainable_updates)
 
     return net, preds, trainable_updates
 

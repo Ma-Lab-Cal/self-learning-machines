@@ -14,11 +14,12 @@ class AbstractNetwork(Circuit):
         self.name = name
         self.epsilon = epsilon
         super().__init__(name)
-        self.__nodes__ = [str(i) for i in range(con_graph.number_of_nodes())]
-        self.inputs = [self.B(n + 1, *inds) for n, inds in enumerate(node_cfg[0])]
+        assert all(isinstance(n, int) for n in con_graph.nodes), "Node names must be numbers with ground node 0"
+        self.__nodes__ = list(con_graph.nodes)
+        self.inputs = [self.B(n, *inds) for n, inds in enumerate(node_cfg[0], start=1)]
         self.outputs = [
-            self.B(n + 1 + len(self.inputs), *inds)
-            for n, inds in enumerate(node_cfg[1])
+            self.B(n + len(self.inputs), *inds)
+            for n, inds in enumerate(node_cfg[1], start=1)
         ]
 
         self.solver = solver
@@ -164,22 +165,22 @@ class LinearEdge(SubCircuitFactory):
     NAME = "linear_edge"
     NODES = ("t_D", "t_S")
 
-    def __init__(self, r=0.5, epsilon=1e-6):
-        super().__init__(r=r)
+    def __init__(self, val=0.5, epsilon=1e-6):
+        super().__init__(val=val)
 
         self.alpha = 1
 
-        self.R(1, "t_D", "t_S", r"{r}")
+        self.R(1, "t_D", "t_S", "{val}")
 
 
 class TransistorEdgeGroundref(SubCircuitFactory):
     NAME = "transistor_edge_groundref"
     NODES = ("t_D", "t_S")
 
-    def __init__(self, vg=2.5, r_shunt=1e16, epsilon=1e-6):
-        super().__init__(vg=vg)
+    def __init__(self, val=2.5, r_shunt=1e16, epsilon=1e-6):
+        super().__init__(val=val)
 
-        self.V(1, "t_G", "t_S", "{vg}")
+        self.V(1, "t_G", "t_S", "{val}")
 
         # assume models are already defined globally
         # self.MOSFET(1, "t_D", "t_G", "t_S", 0, model="Ideal")
@@ -193,12 +194,12 @@ class TransistorEdge(SubCircuitFactory):
     NAME = "transistor_edge"
     NODES = ("t_D", "t_S")
 
-    def __init__(self, vgs=0.5, r_shunt=1e16, epsilon=1e-6):
-        super().__init__(vgs=vgs)
+    def __init__(self, val=0.5, r_shunt=1e16, epsilon=1e-6):
+        super().__init__(val=val)
 
         self.alpha = 1
 
-        self.V(1, "t_G", "t_S", "{vgs}")
+        self.V(1, "t_G", "t_S", "{val}")
         self.R(1, "t_D", "t_S", r_shunt)
 
         # assume models are already defined globally
@@ -285,10 +286,10 @@ class WrappedTransistorEdgeGroundref:
         self.edge = edge
 
     def update(self, delta):
-        self.edge.parameters["vg"] += self.alpha * delta
+        self.edge.parameters["val"] += self.alpha * delta
 
     def get_val(self):
-        return self.edge.parameters["vg"]
+        return self.edge.parameters["val"]
 
 
 class WrappedTransistorEdge:
@@ -300,10 +301,10 @@ class WrappedTransistorEdge:
         self.edge = edge
 
     def update(self, delta):
-        self.edge.parameters["vgs"] += self.alpha * delta
+        self.edge.parameters["val"] += self.alpha * delta
 
     def get_val(self):
-        return self.edge.parameters["vgs"]
+        return self.edge.parameters["val"]
 
 
 class WrappedLinearEdge:
@@ -315,10 +316,10 @@ class WrappedLinearEdge:
         self.edge = edge
 
     def update(self, delta):
-        self.edge.parameters["r"] += self.alpha * delta
+        self.edge.parameters["val"] += self.alpha * delta
 
     def get_val(self):
-        return self.edge.parameters["r"]
+        return self.edge.parameters["val"]
 
 
 class EdgeNetwork(AbstractNetwork):
@@ -342,12 +343,11 @@ class EdgeNetwork(AbstractNetwork):
 
         self.edges = []
 
-        nodes_map = {n: i for i, n in enumerate(con_graph.nodes())}
         edge_subckt = edge_class.class_subckt(epsilon=epsilon)
         self.subcircuit(edge_subckt)
-        for n, (u, v, r) in enumerate(con_graph.edges(data="weight")):
+        for n, (u, v, pv) in enumerate(con_graph.edges(data="weight")):
             edge = edge_class(
-                self.X(n + 1, edge_subckt.name, nodes_map[u], nodes_map[v], vg=r) # TODO: modularize and allow for cg AND vgs?
+                self.X(n + 1, edge_subckt.name, u, v, val=pv)
             )
             self.edges.append(edge)
 
