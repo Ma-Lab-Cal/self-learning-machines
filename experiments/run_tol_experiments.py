@@ -115,13 +115,13 @@ def run_tol_experiment(
         abstol=abstol, reltol=reltol, vntol=vntol, trtol=trtol, chgtol=chgtol
     )
 
-    instance.ressource_usage() # reset clock
+    instance.resource_usage() # reset clock
 
     # Run simulation
     res = net.cached_simulator.transient(
         step_time=LEARN_TIME, end_time=T_END
     )
-    ru = instance.ressource_usage()
+    ru = instance.resource_usage()
 
     success = np.isclose(float(res.time[-1]), float(T_END))
     return res, success, ru
